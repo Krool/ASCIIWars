@@ -9,7 +9,8 @@ export class Camera {
   private get minZoom(): number {
     const worldW = MAP_WIDTH * TILE_SIZE;
     const worldH = MAP_HEIGHT * TILE_SIZE;
-    return Math.min(this.canvas.width / worldW, this.canvas.height / worldH);
+    // 5% padding on each side → view = world * 1.10
+    return Math.min(this.canvas.width / (worldW * 1.10), this.canvas.height / (worldH * 1.10));
   }
 
   private isDragging = false;

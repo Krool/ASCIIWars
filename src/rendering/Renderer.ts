@@ -16,7 +16,7 @@ const LANE_LEFT_COLOR = '#4fc3f7';
 const LANE_RIGHT_COLOR = '#ff8a65';
 
 export class Renderer {
-  private canvas: HTMLCanvasElement;
+  canvas: HTMLCanvasElement;
   ctx: CanvasRenderingContext2D;
   camera: Camera;
 
@@ -856,7 +856,7 @@ export class Renderer {
   private drawMinimap(ctx: CanvasRenderingContext2D, state: GameState): void {
     const mmW = 120, mmH = 180;
     const mx = this.canvas.width - mmW - 10;
-    const my = this.canvas.height - mmH - 132; // above build tray (68mil + 4gap + 52hut + 8pad)
+    const my = this.canvas.height - mmH - 76; // above build tray (68px tray + 8px pad)
     const scaleX = mmW / MAP_WIDTH;
     const scaleY = mmH / MAP_HEIGHT;
 

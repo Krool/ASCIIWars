@@ -342,6 +342,20 @@ export interface NukeTelegraph {
   timer: number;     // ticks remaining before detonation
 }
 
+// === Sound Events ===
+
+export type SoundEventType =
+  | 'building_placed' | 'building_destroyed'
+  | 'unit_killed' | 'nuke_incoming' | 'nuke_detonated'
+  | 'diamond_exposed' | 'diamond_carried' | 'hq_damaged'
+  | 'match_start' | 'match_end_win' | 'match_end_lose';
+
+export interface SoundEvent {
+  type: SoundEventType;
+  x?: number; // world tile coords
+  y?: number;
+}
+
 export interface GameState {
   tick: number;
   players: PlayerState[];
@@ -360,6 +374,7 @@ export interface GameState {
   particles: Particle[];
   nukeEffects: NukeEffect[];
   nukeTelegraphs: NukeTelegraph[];
+  soundEvents: SoundEvent[];
 }
 
 // === Commands (client -> server) ===

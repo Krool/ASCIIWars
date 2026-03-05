@@ -21,9 +21,6 @@ const BUILD_TRAY: BuildTrayItem[] = [
   { type: BuildingType.Tower, label: 'Tower', key: '4' },
 ];
 
-// Hut slots fill from center outward in a 10-slot row
-const CENTER_OUT_ORDER = [4, 5, 3, 6, 2, 7, 1, 8, 0, 9];
-
 const ASSIGNMENT_CYCLE: HarvesterAssignment[] = [
   HarvesterAssignment.BaseGold,
   HarvesterAssignment.Wood,
@@ -38,12 +35,6 @@ const ASSIGNMENT_LABELS: Record<HarvesterAssignment, string> = {
   [HarvesterAssignment.Center]: '◆ Center',
 };
 
-const ASSIGNMENT_ICONS: Record<HarvesterAssignment, string> = {
-  [HarvesterAssignment.BaseGold]: '★',
-  [HarvesterAssignment.Wood]: '♣',
-  [HarvesterAssignment.Stone]: '▪',
-  [HarvesterAssignment.Center]: '◆',
-};
 
 export class InputHandler {
   private game: Game;
@@ -70,6 +61,11 @@ export class InputHandler {
           this.nukeTargeting = !this.nukeTargeting;
           this.selectedBuilding = null;
         }
+        return;
+      }
+
+      if (e.key === 'm' || e.key === 'M') {
+        this.game.sendCommand({ type: 'build_hut', playerId: 0 });
         return;
       }
 
@@ -228,64 +224,33 @@ export class InputHandler {
     const W = this.canvas.width;
     const H = this.canvas.height;
     const milH = 68;
-    const hutH = 52;
-    const gap = 4;
-    const hutY = H - hutH;
-    const milY = hutY - gap - milH;
-    const milW = W / (BUILD_TRAY.length + 1); // +1 for nuke
-    const hutSlotW = W / 10;
-    return { W, H, milH, hutH, hutY, milY, milW, hutSlotW };
+    const milY = H - milH;
+    // Miner button + 4 military + nuke = 6 buttons total
+    const milW = W / 6;
+    return { W, H, milH, milY, milW };
   }
 
   // Returns true if click was consumed by a UI panel
   private handleUIClick(e: MouseEvent): boolean {
-    const { milH, hutH, hutY, milY, milW, hutSlotW } = this.getTrayLayout();
+    const { milH, milY, milW } = this.getTrayLayout();
     const cx = e.clientX;
     const cy = e.clientY;
     const player = this.game.state.players[0];
 
-    // Military tray hit test
     if (cy >= milY && cy < milY + milH) {
       const colIdx = Math.floor(cx / milW);
-      if (colIdx < BUILD_TRAY.length) {
-        const item = BUILD_TRAY[colIdx];
+      if (colIdx === 0) {
+        // Miner button
+        this.game.sendCommand({ type: 'build_hut', playerId: 0 });
+      } else if (colIdx >= 1 && colIdx <= BUILD_TRAY.length) {
+        const item = BUILD_TRAY[colIdx - 1];
         this.nukeTargeting = false;
         this.selectedBuilding = this.selectedBuilding === item.type ? null : item.type;
-      } else if (colIdx === BUILD_TRAY.length) {
-        // Nuke button
+      } else if (colIdx === BUILD_TRAY.length + 1) {
         if (player.nukeAvailable) {
           this.selectedBuilding = null;
           this.nukeTargeting = !this.nukeTargeting;
         }
-      }
-      return true;
-    }
-
-    // Hut row hit test
-    if (cy >= hutY && cy < hutY + hutH) {
-      const slotIdx = Math.floor(cx / hutSlotW);
-      if (slotIdx < 0 || slotIdx >= 10) return true;
-
-      const myHuts = this.game.state.buildings.filter(
-        b => b.playerId === 0 && b.type === BuildingType.HarvesterHut
-      );
-      // Find which hut (if any) is in this slot
-      const hutInSlot = CENTER_OUT_ORDER.slice(0, myHuts.length).indexOf(slotIdx);
-      if (hutInSlot >= 0) {
-        // Cycle assignment of this hut's harvester
-        const hut = myHuts[hutInSlot];
-        const h = this.game.state.harvesters.find(h => h.hutId === hut.id);
-        if (h) {
-          const curIdx = ASSIGNMENT_CYCLE.indexOf(h.assignment);
-          const nextAssignment = ASSIGNMENT_CYCLE[(curIdx + 1) % ASSIGNMENT_CYCLE.length];
-          this.game.sendCommand({
-            type: 'set_hut_assignment', playerId: 0,
-            hutId: hut.id, assignment: nextAssignment,
-          });
-        }
-      } else {
-        // Empty slot — build a new hut
-        this.game.sendCommand({ type: 'build_hut', playerId: 0 });
       }
       return true;
     }
@@ -319,16 +284,39 @@ export class InputHandler {
   }
 
   private drawBuildTray(ctx: CanvasRenderingContext2D): void {
-    const { W, milH, hutH, hutY, milY, milW, hutSlotW } = this.getTrayLayout();
+    const { W, milH, milY, milW } = this.getTrayLayout();
     const player = this.game.state.players[0];
 
-    // ── Military tray background ──────────────────────────────────────
     ctx.fillStyle = 'rgba(0, 0, 0, 0.88)';
     ctx.fillRect(0, milY, W, milH);
 
+    // ── Miner button (col 0, earthy green-brown) ──────────────────────
+    const myHuts = this.game.state.buildings.filter(
+      b => b.playerId === 0 && b.type === BuildingType.HarvesterHut
+    );
+    const hutCost = HARVESTER_HUT_COST(myHuts.length);
+    const canAffordHut = player.gold >= hutCost && myHuts.length < 10;
+    const mx = 0;
+    ctx.fillStyle = 'rgba(40, 55, 20, 0.9)';
+    ctx.fillRect(mx + 1, milY + 1, milW - 2, milH - 2);
+    ctx.strokeStyle = canAffordHut ? '#8bc34a' : '#3a4a1a';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(mx + 1, milY + 1, milW - 2, milH - 2);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = canAffordHut ? '#c5e1a5' : '#555';
+    ctx.font = 'bold 15px monospace';
+    ctx.fillText('Miner', mx + milW / 2, milY + 22);
+    ctx.fillStyle = canAffordHut ? '#ffd700' : '#553300';
+    ctx.font = '13px monospace';
+    ctx.fillText(myHuts.length < 10 ? `${hutCost}g` : 'MAX', mx + milW / 2, milY + 40);
+    ctx.fillStyle = '#4a5a2a';
+    ctx.font = '12px monospace';
+    ctx.fillText('[M]', mx + milW / 2, milY + 56);
+
+    // ── Military buttons (cols 1–4) ───────────────────────────────────
     for (let i = 0; i < BUILD_TRAY.length; i++) {
       const item = BUILD_TRAY[i];
-      const bx = i * milW;
+      const bx = (i + 1) * milW;
       const isSelected = this.selectedBuilding === item.type;
       const cost = BUILDING_COSTS[item.type];
       const canAfford = player.gold >= cost.gold && player.wood >= cost.wood && player.stone >= cost.stone;
@@ -356,9 +344,9 @@ export class InputHandler {
       ctx.fillText(`[${item.key}]`, bx + milW / 2, milY + 56);
     }
 
-    // Nuke button
+    // ── Nuke button (col 5) ───────────────────────────────────────────
     const nukeAvail = player.nukeAvailable;
-    const nukeX = BUILD_TRAY.length * milW;
+    const nukeX = (BUILD_TRAY.length + 1) * milW;
     ctx.fillStyle = this.nukeTargeting ? 'rgba(255, 50, 0, 0.35)' : 'rgba(28, 28, 28, 0.9)';
     ctx.fillRect(nukeX + 1, milY + 1, milW - 2, milH - 2);
     ctx.strokeStyle = this.nukeTargeting ? '#ff5722' : (nukeAvail ? '#ff5722' : '#333');
@@ -371,65 +359,6 @@ export class InputHandler {
     ctx.fillStyle = '#555';
     ctx.font = '12px monospace';
     ctx.fillText('[N]', nukeX + milW / 2, milY + 50);
-
-    // ── Hut row ───────────────────────────────────────────────────────
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.88)';
-    ctx.fillRect(0, hutY, W, hutH);
-
-    const myHuts = this.game.state.buildings.filter(
-      b => b.playerId === 0 && b.type === BuildingType.HarvesterHut
-    );
-    // Build slot→hut map
-    const slotToHut: (typeof myHuts[0] | null)[] = new Array(10).fill(null);
-    for (let i = 0; i < myHuts.length && i < 10; i++) {
-      slotToHut[CENTER_OUT_ORDER[i]] = myHuts[i];
-    }
-    const nextSlot = myHuts.length < 10 ? CENTER_OUT_ORDER[myHuts.length] : -1;
-    const hutCost = HARVESTER_HUT_COST(myHuts.length);
-    const canAffordHut = player.gold >= hutCost;
-
-    for (let slot = 0; slot < 10; slot++) {
-      const hx = slot * hutSlotW;
-      const hut = slotToHut[slot];
-      const isNext = slot === nextSlot;
-
-      ctx.fillStyle = hut
-        ? 'rgba(55, 35, 15, 0.9)'
-        : isNext ? 'rgba(35, 35, 20, 0.9)' : 'rgba(18, 18, 18, 0.9)';
-      ctx.fillRect(hx + 1, hutY + 1, hutSlotW - 2, hutH - 2);
-      ctx.strokeStyle = hut ? '#8d6e63' : (isNext ? '#666' : '#2a2a2a');
-      ctx.lineWidth = 1;
-      ctx.strokeRect(hx + 1, hutY + 1, hutSlotW - 2, hutH - 2);
-
-      ctx.textAlign = 'center';
-
-      if (hut) {
-        const harvester = this.game.state.harvesters.find(h => h.hutId === hut.id);
-        ctx.fillStyle = '#c8a070';
-        ctx.font = 'bold 14px monospace';
-        ctx.fillText('HUT', hx + hutSlotW / 2, hutY + 16);
-        ctx.fillStyle = '#aaa';
-        ctx.font = '15px monospace';
-        ctx.fillText(harvester ? ASSIGNMENT_ICONS[harvester.assignment] : '···', hx + hutSlotW / 2, hutY + 32);
-        // HP bar
-        const hpFrac = hut.hp / hut.maxHp;
-        ctx.fillStyle = '#222';
-        ctx.fillRect(hx + 3, hutY + 40, hutSlotW - 6, 6);
-        ctx.fillStyle = hpFrac > 0.5 ? '#4caf50' : hpFrac > 0.25 ? '#ff9800' : '#f44336';
-        ctx.fillRect(hx + 3, hutY + 40, (hutSlotW - 6) * hpFrac, 6);
-      } else if (isNext) {
-        ctx.fillStyle = canAffordHut ? '#bbb' : '#555';
-        ctx.font = '14px monospace';
-        ctx.fillText('+ HUT', hx + hutSlotW / 2, hutY + 20);
-        ctx.fillStyle = canAffordHut ? '#ffd700' : '#553300';
-        ctx.font = '13px monospace';
-        ctx.fillText(`${hutCost}g`, hx + hutSlotW / 2, hutY + 38);
-      } else {
-        ctx.fillStyle = '#2a2a2a';
-        ctx.font = '18px monospace';
-        ctx.fillText('·', hx + hutSlotW / 2, hutY + 30);
-      }
-    }
 
     ctx.textAlign = 'start';
   }

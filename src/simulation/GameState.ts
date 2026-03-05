@@ -7,12 +7,16 @@ import {
   LANE_PATHS, Vec2,
   GameCommand, BuildingType, BuildingState, ResourceType,
   HarvesterAssignment, HarvesterState, UnitState,
-  StatusType,
+  StatusType, SoundEvent,
 } from './types';
 import { BUILDING_COSTS, HARVESTER_HUT_COST, SPAWN_INTERVAL_TICKS, UNIT_STATS, TOWER_STATS } from './data';
 
 let nextId = 1;
 function genId(): number { return nextId++; }
+
+function addSound(state: GameState, type: SoundEvent['type'], x?: number, y?: number): void {
+  state.soundEvents.push({ type, x, y });
+}
 
 // === Generate diamond-shaped gold cell grid ===
 
@@ -182,6 +186,7 @@ export function createInitialState(
     particles: [],
     nukeEffects: [],
     nukeTelegraphs: [],
+    soundEvents: [],
   };
 }
 
@@ -266,11 +271,15 @@ function getPathLength(path: readonly Vec2[]): number {
 // === Simulation Tick ===
 
 export function simulateTick(state: GameState, commands: GameCommand[]): void {
+  state.soundEvents = [];
   for (const cmd of commands) processCommand(state, cmd);
 
   if (state.matchPhase === 'prematch') {
     state.prematchTimer--;
-    if (state.prematchTimer <= 0) state.matchPhase = 'playing';
+    if (state.prematchTimer <= 0) {
+      state.matchPhase = 'playing';
+      addSound(state, 'match_start');
+    }
     state.tick++;
     return;
   }
@@ -286,6 +295,7 @@ export function simulateTick(state: GameState, commands: GameCommand[]): void {
     if (isDiamondExposed(state.diamondCells)) {
       state.diamond.exposed = true;
       state.diamond.state = 'exposed';
+      addSound(state, 'diamond_exposed', DIAMOND_CENTER_X, DIAMOND_CENTER_Y);
     }
   }
 
@@ -349,6 +359,7 @@ function placeBuilding(state: GameState, cmd: Extract<GameCommand, { type: 'plac
       lane: isLeft ? Lane.Left : Lane.Right,
       hp: cost.hp, maxHp: cost.hp, spawnTimer: 0, upgradePath: ['A'],
     });
+    addSound(state, 'building_placed', world.x, world.y);
   } else {
     // Military grid
     if (cmd.gridX < 0 || cmd.gridX >= BUILD_GRID_COLS || cmd.gridY < 0 || cmd.gridY >= BUILD_GRID_ROWS) return;
@@ -362,6 +373,7 @@ function placeBuilding(state: GameState, cmd: Extract<GameCommand, { type: 'plac
       lane: isLeft ? Lane.Left : Lane.Right,
       hp: cost.hp, maxHp: cost.hp, spawnTimer: initialTimer, upgradePath: ['A'],
     });
+    addSound(state, 'building_placed', world.x, world.y);
   }
 }
 
@@ -379,6 +391,7 @@ function sellBuilding(state: GameState, cmd: Extract<GameCommand, { type: 'sell_
   }
 
   addFloatingText(state, building.worldX, building.worldY, `+${Math.floor(cost.gold * 0.5)}g`, '#ffd700');
+  addSound(state, 'building_destroyed', building.worldX, building.worldY);
   state.buildings.splice(idx, 1);
 }
 
@@ -403,7 +416,9 @@ function buildHut(state: GameState, cmd: Extract<GameCommand, { type: 'build_hut
 
   const origin = getHutGridOrigin(cmd.playerId);
   const occupiedHuts = new Set(myHuts.map(b => b.gridX));
-  for (let gx = 0; gx < HUT_GRID_COLS; gx++) {
+  // Fill from center outward
+  const CENTER_OUT = [4, 5, 3, 6, 2, 7, 1, 8, 0, 9];
+  for (const gx of CENTER_OUT) {
     if (!occupiedHuts.has(gx)) {
       const world = { x: origin.x + gx, y: origin.y };
       const building: BuildingState = {
@@ -420,6 +435,7 @@ function buildHut(state: GameState, cmd: Extract<GameCommand, { type: 'build_hut
         carryingDiamond: false, carryingResource: null, carryAmount: 0,
         targetCellIdx: -1, fightTargetId: null,
       });
+      addSound(state, 'building_placed', world.x, world.y);
       return;
     }
   }
@@ -448,6 +464,7 @@ function fireNuke(state: GameState, cmd: Extract<GameCommand, { type: 'fire_nuke
     playerId: cmd.playerId,
     timer: Math.round(1.25 * TICK_RATE),
   });
+  addSound(state, 'nuke_incoming', cmd.x, cmd.y);
 }
 
 function dropDiamond(state: GameState, x: number, y: number): void {
@@ -701,15 +718,19 @@ function tickCombat(state: GameState): void {
       const targetTeam = unit.team === Team.Bottom ? Team.Top : Team.Bottom;
       state.hqHp[targetTeam] -= unit.damage;
       addFloatingText(state, unit.x, unit.y, `-${unit.damage} HQ`, '#ff0000');
+      addSound(state, 'hq_damaged', unit.x, unit.y);
       unit.hp = 0;
     }
   }
 
   // Remove dead units with particles
   const deadUnits = state.units.filter(u => u.hp <= 0);
+  // Throttle death sounds to avoid audio chaos (max 3 per tick, pick spread positions)
+  let deathSoundCount = 0;
   for (const u of deadUnits) {
     addDeathParticles(state, u.x, u.y, u.team === Team.Bottom ? '#4488ff' : '#ff4444', 5);
     if (u.carryingDiamond) dropDiamond(state, u.x, u.y);
+    if (deathSoundCount < 3) { addSound(state, 'unit_killed', u.x, u.y); deathSoundCount++; }
   }
   state.units = state.units.filter(u => u.hp > 0);
 }
@@ -990,6 +1011,7 @@ function executeNukeDetonation(state: GameState, playerId: number, x: number, y:
   state.nukeEffects.push({
     x, y, radius, age: 0, maxAge: TICK_RATE * 2,
   });
+  addSound(state, 'nuke_detonated', x, y);
 
   state.units = state.units.filter(u => {
     if (u.team !== enemyTeam) return true;
@@ -1179,6 +1201,7 @@ function tickCenterHarvester(state: GameState, h: HarvesterState, movePerTick: n
         state.diamond.carrierId = h.id;
         state.diamond.carrierType = 'harvester';
         h.state = 'walking_home';
+        addSound(state, 'diamond_carried', h.x, h.y);
       } else if (h.state !== 'mining') {
         h.state = 'mining';
         h.miningTimer = 8 * TICK_RATE;
@@ -1289,9 +1312,13 @@ function getResourceNodePosition(h: HarvesterState): { x: number; y: number } {
 }
 
 function checkWinConditions(state: GameState): void {
+  if (state.matchPhase === 'ended') return;
   if (state.hqHp[Team.Bottom] <= 0) {
     state.winner = Team.Top; state.winCondition = 'military'; state.matchPhase = 'ended';
+    // Player 0 is Bottom team — if top wins, player loses
+    addSound(state, 'match_end_lose');
   } else if (state.hqHp[Team.Top] <= 0) {
     state.winner = Team.Bottom; state.winCondition = 'military'; state.matchPhase = 'ended';
+    addSound(state, 'match_end_win');
   }
 }

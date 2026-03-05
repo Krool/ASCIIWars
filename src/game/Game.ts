@@ -7,6 +7,7 @@ import { BUILDING_COSTS, HARVESTER_HUT_COST } from '../simulation/data';
 import { GameLoop } from './GameLoop';
 import { Renderer } from '../rendering/Renderer';
 import { InputHandler } from '../ui/InputHandler';
+import { SoundManager } from '../audio/SoundManager';
 
 export class Game {
   state: GameState;
@@ -14,6 +15,7 @@ export class Game {
   private loop: GameLoop;
   private pendingCommands: GameCommand[] = [];
   private input: InputHandler;
+  private sounds: SoundManager;
 
   constructor(canvas: HTMLCanvasElement) {
     this.state = createInitialState([
@@ -25,6 +27,7 @@ export class Game {
 
     this.renderer = new Renderer(canvas);
     this.input = new InputHandler(this, canvas, this.renderer.camera);
+    this.sounds = new SoundManager();
 
     this.loop = new GameLoop(
       () => this.tick(),
@@ -44,6 +47,10 @@ export class Game {
     this.runBotAI();
     simulateTick(this.state, this.pendingCommands);
     this.pendingCommands = [];
+    // Play sounds emitted during this tick
+    for (const ev of this.state.soundEvents) {
+      this.sounds.play(ev, this.renderer.camera, this.renderer.canvas);
+    }
   }
 
   private render(): void {
