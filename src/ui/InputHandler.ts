@@ -6,7 +6,7 @@ import {
   HarvesterAssignment, Team,
 } from '../simulation/types';
 import { getBuildGridOrigin, getTeamAlleyOrigin } from '../simulation/GameState';
-import { BUILDING_COSTS, HARVESTER_HUT_COST, UPGRADE_COSTS, UPGRADE_TREES } from '../simulation/data';
+import { HARVESTER_HUT_COST, UPGRADE_TREES, RACE_BUILDING_COSTS, RACE_UPGRADE_COSTS } from '../simulation/data';
 
 interface BuildTrayItem {
   type: BuildingType;
@@ -788,15 +788,16 @@ export class InputHandler {
       const def = tree?.[choice as keyof typeof tree];
       return { choice, cost, name: def?.name, desc: def?.desc };
     };
+    const raceCosts = RACE_UPGRADE_COSTS[race];
     if (building.upgradePath.length === 1 && building.upgradePath[0] === 'A') {
-      return [lookup('B', UPGRADE_COSTS.tier1), lookup('C', UPGRADE_COSTS.tier1)];
+      return [lookup('B', raceCosts.tier1), lookup('C', raceCosts.tier1)];
     }
     if (building.upgradePath.length === 2) {
       if (building.upgradePath[1] === 'B') {
-        return [lookup('D', UPGRADE_COSTS.tier2), lookup('E', UPGRADE_COSTS.tier2)];
+        return [lookup('D', raceCosts.tier2), lookup('E', raceCosts.tier2)];
       }
       if (building.upgradePath[1] === 'C') {
-        return [lookup('F', UPGRADE_COSTS.tier2), lookup('G', UPGRADE_COSTS.tier2)];
+        return [lookup('F', raceCosts.tier2), lookup('G', raceCosts.tier2)];
       }
     }
     return [];
@@ -1057,7 +1058,8 @@ export class InputHandler {
       const item = BUILD_TRAY[i];
       const bx = (i + 1) * milW;
       const isSelected = this.selectedBuilding === item.type;
-      const cost = BUILDING_COSTS[item.type];
+      const race = this.game.state.players[0].race;
+      const cost = RACE_BUILDING_COSTS[race][item.type];
       const canAfford = player.gold >= cost.gold && player.wood >= cost.wood && player.stone >= cost.stone;
 
       ctx.fillStyle = isSelected ? 'rgba(41, 121, 255, 0.28)' : 'rgba(28, 28, 28, 0.9)';

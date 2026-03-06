@@ -6,14 +6,15 @@ interface RaceOption {
   race: Race;
   label: string;
   desc: string;
+  econ: string;   // resource economy hint
   ascii: string;
 }
 
 const RACES: RaceOption[] = [
-  { race: Race.Surge, label: 'SURGE', desc: 'Electric - Fast & bursty', ascii: '/>' },
-  { race: Race.Tide, label: 'TIDE', desc: 'Water - Tanky & slow', ascii: '|W|' },
-  { race: Race.Ember, label: 'EMBER', desc: 'Fire - High damage, fragile', ascii: '/F\\' },
-  { race: Race.Bastion, label: 'BASTION', desc: 'Stone - Ultra tanky fortress', ascii: '[#]' },
+  { race: Race.Surge, label: 'SURGE', desc: 'Fast & bursty', econ: 'Gold only', ascii: '/>' },
+  { race: Race.Tide, label: 'TIDE', desc: 'Tanky & control', econ: 'Wood heavy', ascii: '|W|' },
+  { race: Race.Ember, label: 'EMBER', desc: 'High burst damage', econ: 'Gold + Stone', ascii: '/F\\' },
+  { race: Race.Bastion, label: 'BASTION', desc: 'Durable fortress', econ: 'Stone heavy', ascii: '[#]' },
 ];
 
 export interface RaceSelectResult {
@@ -124,7 +125,7 @@ export class RaceSelectScene implements Scene {
   private isStartButtonAt(cx: number, cy: number): boolean {
     const w = this.canvas.width;
     const h = this.canvas.height;
-    const btnW = 200;
+    const btnW = 180;
     const btnH = 48;
     const btnX = (w - btnW) / 2;
     const btnY = h * 0.78;
@@ -151,18 +152,25 @@ export class RaceSelectScene implements Scene {
     ctx.fillStyle = '#0a0a0a';
     ctx.fillRect(0, 0, w, h);
 
-    // Header
-    const headerSize = Math.max(16, Math.min(w / 25, 32));
-    ctx.font = `bold ${headerSize}px monospace`;
+    // === Title ===
+    const titleSize = Math.max(20, Math.min(w / 16, 48));
+    ctx.font = `bold ${titleSize}px monospace`;
     ctx.textAlign = 'center';
-    ctx.fillStyle = '#ccc';
-    ctx.fillText('CHOOSE YOUR RACE', w / 2, h * 0.15);
+    ctx.fillStyle = '#fff';
+    ctx.fillText('ASCII WARS', w / 2, h * 0.10);
 
-    ctx.font = `${headerSize * 0.5}px monospace`;
+    // Subtitle
+    const subSize = Math.max(12, Math.min(w / 30, 22));
+    ctx.font = `${subSize}px monospace`;
     ctx.fillStyle = '#666';
-    ctx.fillText('Arrow keys or click to select, Enter to confirm', w / 2, h * 0.22);
+    ctx.fillText('Choose your race', w / 2, h * 0.16);
 
-    // Race boxes
+    // Hint
+    ctx.font = `${subSize * 0.7}px monospace`;
+    ctx.fillStyle = '#444';
+    ctx.fillText('Click or Arrow keys + Enter', w / 2, h * 0.21);
+
+    // === Race boxes ===
     const boxes = this.getBoxLayout();
     const fontSize = Math.max(10, Math.min(boxes[0].w / 8, 16));
 
@@ -173,56 +181,83 @@ export class RaceSelectScene implements Scene {
       const isSelected = i === this.selectedIndex;
       const isHover = i === this.hoverIndex;
 
+      // Clip to box so text doesn't bleed
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(box.x, box.y, box.w, box.h);
+      ctx.clip();
+
       // Box background
       ctx.fillStyle = isSelected ? '#1a1a2e' : '#111';
       ctx.fillRect(box.x, box.y, box.w, box.h);
+
+      // Glow behind selected
+      if (isSelected) {
+        ctx.shadowColor = colors.primary;
+        ctx.shadowBlur = 15;
+      }
 
       // Border
       ctx.strokeStyle = isSelected ? colors.primary : (isHover ? '#555' : '#333');
       ctx.lineWidth = isSelected ? 3 : 1;
       ctx.strokeRect(box.x, box.y, box.w, box.h);
+      ctx.shadowBlur = 0;
+
+      const cx = box.x + box.w / 2;
 
       // ASCII sprite large
       ctx.font = `bold ${fontSize * 2.5}px monospace`;
       ctx.textAlign = 'center';
       ctx.fillStyle = colors.primary;
-      ctx.fillText(race.ascii, box.x + box.w / 2, box.y + box.h * 0.3);
+      ctx.fillText(race.ascii, cx, box.y + box.h * 0.28);
 
       // Race name
-      ctx.font = `bold ${fontSize * 1.2}px monospace`;
+      ctx.font = `bold ${fontSize * 1.3}px monospace`;
       ctx.fillStyle = isSelected ? colors.primary : '#aaa';
-      ctx.fillText(race.label, box.x + box.w / 2, box.y + box.h * 0.55);
+      ctx.fillText(race.label, cx, box.y + box.h * 0.50);
 
       // Description
-      ctx.font = `${fontSize * 0.8}px monospace`;
-      ctx.fillStyle = '#888';
-      ctx.fillText(race.desc, box.x + box.w / 2, box.y + box.h * 0.7);
+      ctx.font = `${fontSize * 0.75}px monospace`;
+      ctx.fillStyle = '#999';
+      ctx.fillText(race.desc, cx, box.y + box.h * 0.63);
+
+      // Economy hint
+      ctx.font = `${fontSize * 0.7}px monospace`;
+      ctx.fillStyle = '#777';
+      ctx.fillText(race.econ, cx, box.y + box.h * 0.74);
 
       // Selected indicator
       if (isSelected) {
-        ctx.font = `bold ${fontSize}px monospace`;
+        ctx.font = `bold ${fontSize * 0.9}px monospace`;
         ctx.fillStyle = colors.secondary;
-        ctx.fillText('[ SELECTED ]', box.x + box.w / 2, box.y + box.h * 0.88);
+        ctx.fillText('[ SELECTED ]', cx, box.y + box.h * 0.89);
       }
+
+      ctx.restore();
     }
 
-    // Start button
-    const btnY = h * 0.78;
-    const btnW = 200;
+    // === Start button ===
+    const btnW = 180;
     const btnH = 48;
     const btnX = (w - btnW) / 2;
+    const btnY = h * 0.78;
     const selColors = RACE_COLORS[RACES[this.selectedIndex].race];
 
+    // Button glow
+    ctx.shadowColor = selColors.primary;
+    ctx.shadowBlur = 12;
     ctx.fillStyle = selColors.primary;
     ctx.fillRect(btnX, btnY, btnW, btnH);
-    ctx.font = `bold ${fontSize * 1.3}px monospace`;
+    ctx.shadowBlur = 0;
+
+    ctx.font = 'bold 20px monospace';
     ctx.textAlign = 'center';
     ctx.fillStyle = '#000';
-    ctx.fillText('START MATCH', w / 2, btnY + btnH / 2 + fontSize * 0.4);
+    ctx.fillText('START', w / 2, btnY + btnH / 2 + 7);
 
     // Back hint
     ctx.font = `${fontSize * 0.7}px monospace`;
-    ctx.fillStyle = '#555';
+    ctx.fillStyle = '#444';
     ctx.fillText('ESC to go back', w / 2, h - 30);
   }
 }

@@ -12,10 +12,10 @@ import {
   StatusType, SoundEvent,
 } from './types';
 import {
-  BUILDING_COSTS, HARVESTER_HUT_COST, SPAWN_INTERVAL_TICKS, UNIT_STATS, TOWER_STATS,
+  HARVESTER_HUT_COST, SPAWN_INTERVAL_TICKS, UNIT_STATS, TOWER_STATS,
   HARVESTER_MOVE_SPEED, MINE_TIME_BASE_TICKS, MINE_TIME_DIAMOND_TICKS,
-  HARVESTER_RESPAWN_TICKS, HARVESTER_MIN_SEPARATION, BASTION_TOWER_SHIELD_INTERVAL_TICKS, UPGRADE_COSTS,
-  UPGRADE_TREES, UpgradeNodeDef,
+  HARVESTER_RESPAWN_TICKS, HARVESTER_MIN_SEPARATION, BASTION_TOWER_SHIELD_INTERVAL_TICKS,
+  UPGRADE_TREES, UpgradeNodeDef, RACE_UPGRADE_COSTS, getBuildingCost,
 } from './data';
 
 function genId(state: GameState): number { return state.nextEntityId++; }
@@ -31,9 +31,10 @@ function isValidUpgradeChoice(path: string[], choice: string): choice is Upgrade
   return false;
 }
 
-function getUpgradeCost(path: string[]): { gold: number; wood: number; stone: number } | null {
-  if (path.length === 1) return UPGRADE_COSTS.tier1;
-  if (path.length === 2) return UPGRADE_COSTS.tier2;
+function getUpgradeCost(path: string[], race: Race): { gold: number; wood: number; stone: number } | null {
+  const costs = RACE_UPGRADE_COSTS[race];
+  if (path.length === 1) return costs.tier1;
+  if (path.length === 2) return costs.tier2;
   return null;
 }
 
@@ -463,9 +464,9 @@ function purchaseUpgrade(state: GameState, cmd: Extract<GameCommand, { type: 'pu
   if (building.upgradePath.length >= 3) return;
   if (!isValidUpgradeChoice(building.upgradePath, cmd.choice)) return;
 
-  const cost = getUpgradeCost(building.upgradePath);
-  if (!cost) return;
   const player = state.players[cmd.playerId];
+  const cost = getUpgradeCost(building.upgradePath, player.race);
+  if (!cost) return;
   if (player.gold < cost.gold || player.wood < cost.wood || player.stone < cost.stone) return;
 
   player.gold -= cost.gold;
@@ -476,7 +477,7 @@ function purchaseUpgrade(state: GameState, cmd: Extract<GameCommand, { type: 'pu
   // Apply HP upgrade to tower (scales maxHp and heals proportionally)
   if (building.type === BuildingType.Tower) {
     const upgrade = getUnitUpgradeMultipliers(building.upgradePath, player.race, BuildingType.Tower);
-    const baseCost = BUILDING_COSTS[BuildingType.Tower];
+    const baseCost = getBuildingCost(player.race, BuildingType.Tower);
     if (baseCost) {
       const newMax = Math.max(1, Math.round(baseCost.hp * upgrade.hp));
       const hpRatio = building.hp / building.maxHp;
@@ -495,7 +496,7 @@ function placeBuilding(state: GameState, cmd: Extract<GameCommand, { type: 'plac
   const player = state.players[cmd.playerId];
   if (!player) return;
   if (cmd.buildingType === BuildingType.HarvesterHut) return; // huts use build_hut command
-  const cost = BUILDING_COSTS[cmd.buildingType];
+  const cost = getBuildingCost(player.race, cmd.buildingType);
   if (!cost) return;
   if (player.gold < cost.gold || player.wood < cost.wood || player.stone < cost.stone) return;
 
@@ -547,8 +548,9 @@ function sellBuilding(state: GameState, cmd: Extract<GameCommand, { type: 'sell_
     addFloatingText(state, building.worldX + 0.5, building.worldY, `Sell in ${remainingSeconds}s`, '#ff6b6b');
     return;
   }
-  const cost = BUILDING_COSTS[building.type];
-  if (cost) state.players[cmd.playerId].gold += Math.floor(cost.gold * 0.5);
+  const player = state.players[cmd.playerId];
+  const cost = getBuildingCost(player.race, building.type);
+  if (cost) player.gold += Math.floor(cost.gold * 0.5);
 
   // If it's a hut, remove the associated harvester
   if (building.type === BuildingType.HarvesterHut) {
@@ -590,7 +592,7 @@ function buildHut(state: GameState, cmd: Extract<GameCommand, { type: 'build_hut
       const building: BuildingState = {
         id: genId(state), type: BuildingType.HarvesterHut, playerId: cmd.playerId, buildGrid: 'hut',
         gridX: gx, gridY: 0, worldX: world.x, worldY: world.y,
-        lane: Lane.Left, hp: BUILDING_COSTS[BuildingType.HarvesterHut].hp, maxHp: BUILDING_COSTS[BuildingType.HarvesterHut].hp, actionTimer: 0, placedTick: state.tick, upgradePath: [],
+        lane: Lane.Left, hp: getBuildingCost(player.race, BuildingType.HarvesterHut).hp, maxHp: getBuildingCost(player.race, BuildingType.HarvesterHut).hp, actionTimer: 0, placedTick: state.tick, upgradePath: [],
       };
       state.buildings.push(building);
       state.harvesters.push({
@@ -968,7 +970,6 @@ function applyOnHitEffects(state: GameState, attacker: UnitState, target: UnitSt
   }
 }
 
-const COLLISION_DIST = 0.9; // tile units — minimum separation between unit bodies
 const COLLISION_BUILDING_RADIUS = 0.8;
 const COLLISION_GOLD_CELL_RADIUS = 0.58;
 
@@ -995,28 +996,7 @@ function clampToArenaBounds(pos: { x: number; y: number }, radius: number): void
 }
 
 function tickUnitCollision(state: GameState): void {
-  // Unit-vs-unit soft body separation (all teams).
-  for (let i = 0; i < state.units.length; i++) {
-    for (let j = i + 1; j < state.units.length; j++) {
-      const a = state.units[i];
-      const b = state.units[j];
-      const dx = b.x - a.x;
-      const dy = b.y - a.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist >= COLLISION_DIST) continue;
-      if (dist < 0.001) continue;
-
-      const overlap = COLLISION_DIST - dist;
-      const nx = dx / dist;
-      const ny = dy / dist;
-      const push = overlap * 0.5;
-      a.x -= nx * push;
-      a.y -= ny * push;
-      b.x += nx * push;
-      b.y += ny * push;
-    }
-  }
-
+  // No unit-vs-unit push — units pass through each other freely.
   for (const unit of state.units) {
     // Unit-vs-building blocking (except own HQ area handled separately via combat).
     for (const building of state.buildings) {
@@ -1758,9 +1738,9 @@ function tickHarvesters(state: GameState, cellMap: Map<string, GoldCell>): void 
           case HarvesterAssignment.BaseGold:
             h.carryingResource = ResourceType.Gold; h.carryAmount = 3; break;
           case HarvesterAssignment.Wood:
-            h.carryingResource = ResourceType.Wood; h.carryAmount = 4; break;
+            h.carryingResource = ResourceType.Wood; h.carryAmount = 10; break;
           case HarvesterAssignment.Stone:
-            h.carryingResource = ResourceType.Stone; h.carryAmount = 4; break;
+            h.carryingResource = ResourceType.Stone; h.carryAmount = 10; break;
         }
         h.state = 'walking_home';
       }

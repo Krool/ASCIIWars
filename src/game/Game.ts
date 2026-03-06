@@ -4,7 +4,7 @@ import {
   SHARED_ALLEY_COLS, SHARED_ALLEY_ROWS,
 } from '../simulation/types';
 import { createInitialState, simulateTick } from '../simulation/GameState';
-import { BUILDING_COSTS, HARVESTER_HUT_COST, UPGRADE_COSTS } from '../simulation/data';
+import { HARVESTER_HUT_COST, RACE_BUILDING_COSTS, RACE_UPGRADE_COSTS } from '../simulation/data';
 import { GameLoop } from './GameLoop';
 import { Renderer } from '../rendering/Renderer';
 import { InputHandler } from '../ui/InputHandler';
@@ -328,7 +328,7 @@ export class Game {
 
   private botCanAfford(playerId: number, type: BuildingType): boolean {
     const player = this.state.players[playerId];
-    const cost = BUILDING_COSTS[type];
+    const cost = RACE_BUILDING_COSTS[player.race][type];
     return player.gold >= cost.gold && player.wood >= cost.wood && player.stone >= cost.stone;
   }
 
@@ -426,7 +426,8 @@ export class Game {
       });
 
     for (const b of upgradeable) {
-      const cost = b.upgradePath.length === 1 ? UPGRADE_COSTS.tier1 : UPGRADE_COSTS.tier2;
+      const raceCosts = RACE_UPGRADE_COSTS[player.race];
+      const cost = b.upgradePath.length === 1 ? raceCosts.tier1 : raceCosts.tier2;
       if (player.gold < cost.gold || player.wood < cost.wood || player.stone < cost.stone) continue;
 
       const choice = this.botPickUpgrade(b, profile, race);

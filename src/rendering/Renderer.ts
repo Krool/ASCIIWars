@@ -7,7 +7,7 @@ import {
   HQ_WIDTH, HQ_HEIGHT, HQ_HP,
   getMarginAtRow,
   BuildingType, Lane, LANE_PATHS, Vec2,
-  StatusType,
+  StatusType, Race,
 } from '../simulation/types';
 import { getHQPosition, getBuildGridOrigin, getHutGridOrigin, getTeamAlleyOrigin, getUnitUpgradeMultipliers } from '../simulation/GameState';
 import { RACE_COLORS, TOWER_STATS, PLAYER_COLORS } from '../simulation/data';
@@ -558,32 +558,9 @@ export class Renderer {
       const laneColor = u.lane === Lane.Left ? LANE_LEFT_COLOR : LANE_RIGHT_COLOR;
       const r = u.range > 2 ? 3 : 4;
 
-      // Shape by unit category
-      if (u.category === 'melee') {
-        // Melee: filled square
-        ctx.fillStyle = playerColor;
-        ctx.fillRect(px - r, py - r, r * 2, r * 2);
-      } else if (u.category === 'ranged') {
-        // Ranged: filled triangle pointing in move direction
-        const dir = u.team === Team.Bottom ? -1 : 1; // bottom moves up, top moves down
-        ctx.beginPath();
-        ctx.moveTo(px, py - r * dir);
-        ctx.lineTo(px + r, py + r * dir);
-        ctx.lineTo(px - r, py + r * dir);
-        ctx.closePath();
-        ctx.fillStyle = playerColor;
-        ctx.fill();
-      } else {
-        // Caster: diamond/star shape
-        ctx.beginPath();
-        ctx.moveTo(px, py - r);
-        ctx.lineTo(px + r * 0.7, py);
-        ctx.lineTo(px, py + r);
-        ctx.lineTo(px - r * 0.7, py);
-        ctx.closePath();
-        ctx.fillStyle = playerColor;
-        ctx.fill();
-      }
+      // Shape by race + unit category
+      const race = state.players[u.playerId]?.race;
+      this.drawUnitShape(ctx, px, py, r, race, u.category, u.team, playerColor);
       // Lane color center dot
       ctx.beginPath(); ctx.arc(px, py, 1.5, 0, Math.PI * 2);
       ctx.fillStyle = laneColor; ctx.fill();
@@ -643,6 +620,195 @@ export class Renderer {
         ctx.lineWidth = 1;
         ctx.stroke();
       }
+    }
+  }
+
+  // === Unit Shape Helper ===
+
+  private drawUnitShape(
+    ctx: CanvasRenderingContext2D,
+    px: number, py: number, r: number,
+    race: Race | undefined, category: string, team: Team, playerColor: string
+  ): void {
+    ctx.fillStyle = playerColor;
+
+    switch (race) {
+      // ─── SURGE: angular, electric ───
+      case Race.Surge:
+        if (category === 'melee') {
+          // Lightning bolt zigzag
+          ctx.beginPath();
+          ctx.moveTo(px - 1, py - r);
+          ctx.lineTo(px + r * 0.5, py - r * 0.3);
+          ctx.lineTo(px - r * 0.2, py + r * 0.1);
+          ctx.lineTo(px + r * 0.3, py + r);
+          ctx.lineTo(px - r * 0.3, py + r * 0.3);
+          ctx.lineTo(px + r * 0.2, py - r * 0.1);
+          ctx.lineTo(px - r * 0.5, py - r * 0.3);
+          ctx.closePath();
+          ctx.fill();
+        } else if (category === 'ranged') {
+          // Chevron/arrow pointing in move direction
+          const dir = team === Team.Bottom ? -1 : 1;
+          ctx.beginPath();
+          ctx.moveTo(px - r, py + r * 0.5 * dir);
+          ctx.lineTo(px, py - r * dir);
+          ctx.lineTo(px + r, py + r * 0.5 * dir);
+          ctx.lineTo(px + r * 0.5, py + r * 0.5 * dir);
+          ctx.lineTo(px, py - r * 0.3 * dir);
+          ctx.lineTo(px - r * 0.5, py + r * 0.5 * dir);
+          ctx.closePath();
+          ctx.fill();
+        } else {
+          // 4-pointed star/spark
+          ctx.beginPath();
+          const inner = r * 0.35;
+          for (let i = 0; i < 8; i++) {
+            const a = (i * Math.PI / 4) - Math.PI / 2;
+            const rad = i % 2 === 0 ? r : inner;
+            const sx = px + Math.cos(a) * rad;
+            const sy = py + Math.sin(a) * rad;
+            if (i === 0) ctx.moveTo(sx, sy); else ctx.lineTo(sx, sy);
+          }
+          ctx.closePath();
+          ctx.fill();
+        }
+        break;
+
+      // ─── TIDE: rounded, organic ───
+      case Race.Tide:
+        if (category === 'melee') {
+          // Shield / rounded rect
+          const rr = r * 0.3;
+          ctx.beginPath();
+          ctx.moveTo(px - r + rr, py - r);
+          ctx.lineTo(px + r - rr, py - r);
+          ctx.quadraticCurveTo(px + r, py - r, px + r, py - r + rr);
+          ctx.lineTo(px + r, py + r * 0.5);
+          ctx.lineTo(px, py + r);
+          ctx.lineTo(px - r, py + r * 0.5);
+          ctx.lineTo(px - r, py - r + rr);
+          ctx.quadraticCurveTo(px - r, py - r, px - r + rr, py - r);
+          ctx.closePath();
+          ctx.fill();
+        } else if (category === 'ranged') {
+          // Circle (bubble)
+          ctx.beginPath();
+          ctx.arc(px, py, r, 0, Math.PI * 2);
+          ctx.fill();
+        } else {
+          // Wave/crescent
+          ctx.beginPath();
+          ctx.arc(px, py, r, 0.3 * Math.PI, 1.7 * Math.PI);
+          ctx.arc(px + r * 0.3, py, r * 0.7, 1.7 * Math.PI, 0.3 * Math.PI, true);
+          ctx.closePath();
+          ctx.fill();
+        }
+        break;
+
+      // ─── EMBER: sharp, aggressive ───
+      case Race.Ember:
+        if (category === 'melee') {
+          // Flame: triangle with notch
+          ctx.beginPath();
+          ctx.moveTo(px, py - r);
+          ctx.lineTo(px + r, py + r);
+          ctx.lineTo(px + r * 0.2, py + r * 0.3);
+          ctx.lineTo(px, py + r * 0.7);
+          ctx.lineTo(px - r * 0.2, py + r * 0.3);
+          ctx.lineTo(px - r, py + r);
+          ctx.closePath();
+          ctx.fill();
+        } else if (category === 'ranged') {
+          // Narrow kite
+          ctx.beginPath();
+          ctx.moveTo(px, py - r * 1.2);
+          ctx.lineTo(px + r * 0.5, py);
+          ctx.lineTo(px, py + r * 0.6);
+          ctx.lineTo(px - r * 0.5, py);
+          ctx.closePath();
+          ctx.fill();
+        } else {
+          // Sunburst: small circle + 6 rays
+          ctx.beginPath();
+          ctx.arc(px, py, r * 0.4, 0, Math.PI * 2);
+          ctx.fill();
+          for (let i = 0; i < 6; i++) {
+            const a = i * Math.PI / 3;
+            ctx.beginPath();
+            ctx.moveTo(px + Math.cos(a - 0.2) * r * 0.35, py + Math.sin(a - 0.2) * r * 0.35);
+            ctx.lineTo(px + Math.cos(a) * r, py + Math.sin(a) * r);
+            ctx.lineTo(px + Math.cos(a + 0.2) * r * 0.35, py + Math.sin(a + 0.2) * r * 0.35);
+            ctx.fill();
+          }
+        }
+        break;
+
+      // ─── BASTION: heavy, geometric ───
+      case Race.Bastion:
+        if (category === 'melee') {
+          // Cross/plus
+          const arm = r * 0.4;
+          ctx.beginPath();
+          ctx.moveTo(px - arm, py - r);
+          ctx.lineTo(px + arm, py - r);
+          ctx.lineTo(px + arm, py - arm);
+          ctx.lineTo(px + r, py - arm);
+          ctx.lineTo(px + r, py + arm);
+          ctx.lineTo(px + arm, py + arm);
+          ctx.lineTo(px + arm, py + r);
+          ctx.lineTo(px - arm, py + r);
+          ctx.lineTo(px - arm, py + arm);
+          ctx.lineTo(px - r, py + arm);
+          ctx.lineTo(px - r, py - arm);
+          ctx.lineTo(px - arm, py - arm);
+          ctx.closePath();
+          ctx.fill();
+        } else if (category === 'ranged') {
+          // Hexagon
+          ctx.beginPath();
+          for (let i = 0; i < 6; i++) {
+            const a = (i * Math.PI / 3) - Math.PI / 6;
+            const sx = px + Math.cos(a) * r;
+            const sy = py + Math.sin(a) * r;
+            if (i === 0) ctx.moveTo(sx, sy); else ctx.lineTo(sx, sy);
+          }
+          ctx.closePath();
+          ctx.fill();
+        } else {
+          // Crystal: tall narrow diamond
+          ctx.beginPath();
+          ctx.moveTo(px, py - r * 1.1);
+          ctx.lineTo(px + r * 0.5, py);
+          ctx.lineTo(px, py + r * 1.1);
+          ctx.lineTo(px - r * 0.5, py);
+          ctx.closePath();
+          ctx.fill();
+        }
+        break;
+
+      // ─── FALLBACK: original shapes ───
+      default:
+        if (category === 'melee') {
+          ctx.fillRect(px - r, py - r, r * 2, r * 2);
+        } else if (category === 'ranged') {
+          const dir = team === Team.Bottom ? -1 : 1;
+          ctx.beginPath();
+          ctx.moveTo(px, py - r * dir);
+          ctx.lineTo(px + r, py + r * dir);
+          ctx.lineTo(px - r, py + r * dir);
+          ctx.closePath();
+          ctx.fill();
+        } else {
+          ctx.beginPath();
+          ctx.moveTo(px, py - r);
+          ctx.lineTo(px + r * 0.7, py);
+          ctx.lineTo(px, py + r);
+          ctx.lineTo(px - r * 0.7, py);
+          ctx.closePath();
+          ctx.fill();
+        }
+        break;
     }
   }
 
