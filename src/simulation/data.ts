@@ -537,7 +537,7 @@ export const UPGRADE_TREES: Record<Race, Partial<Record<BuildingType, Record<Upg
       C: { name: 'Minotaur', desc: '+20% speed, faster atk', moveSpeedMult: 1.2, attackSpeedMult: 0.9 },
       D: { name: 'Venom Lurker', desc: '+20% dmg, +1 burn', damageMult: 1.2, special: { extraBurnStacks: 1 } },
       E: { name: 'Pack Alpha', desc: '+30% dmg, +1 slow', damageMult: 1.3, special: { extraSlowStacks: 1 } },
-      F: { name: 'Raging Bull', desc: '+30% speed, cleave 2', moveSpeedMult: 1.3, special: { dodgeChance: 0.25, cleaveTargets: 2 } },
+      F: { name: 'Raging Bull', desc: '+30% speed, cleave 2, 25% dodge', moveSpeedMult: 1.3, special: { dodgeChance: 0.25, cleaveTargets: 2 } },
       G: { name: 'Stampede', desc: '+35% dmg, cleave 2, +2 burn', damageMult: 1.35, special: { extraBurnStacks: 2, cleaveTargets: 2 } },
     },
     [BuildingType.RangedSpawner]: {
