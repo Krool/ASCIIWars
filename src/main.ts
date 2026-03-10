@@ -10,6 +10,7 @@ import { SpriteLoader } from './rendering/SpriteLoader';
 import { UIAssets } from './rendering/UIAssets';
 import { Race } from './simulation/types';
 import { BotDifficultyLevel } from './simulation/BotAI';
+import { getMapById } from './simulation/maps';
 import { ProfileScene } from './profile/ProfileScene';
 import { loadProfile, updateProfileFromMatch } from './profile/ProfileData';
 
@@ -56,17 +57,29 @@ uiReady.then(() => {
     manager.switchTo('difficultySelect');
   });
 
-  const difficultySelectScene = new DifficultySelectScene(manager, canvas, sharedUI, (difficulty) => {
-    matchScene.setPlayerRace(selectedRace, difficulty);
+  const difficultySelectScene = new DifficultySelectScene(manager, canvas, sharedUI, (difficulty, mapDef) => {
+    matchScene.setPlayerRace(selectedRace, difficulty, mapDef);
     manager.switchTo('match');
   });
 
-  // Party start callback: host + guest go straight into match (skip race select)
-  titleScene.onPartyStart = (party, isHost) => {
-    const hostRace = party.host.race;
-    const guestRace = party.guest?.race ?? Race.Crown;
+  // Party start callback: all humans go straight into match (skip race select)
+  titleScene.onPartyStart = (party, localSlot) => {
+    const mapDef = getMapById(party.mapId);
     const difficulty = (party.difficulty as BotDifficultyLevel) ?? BotDifficultyLevel.Medium;
-    matchScene.setPartyConfig(hostRace, guestRace, party.seed, party.code, isHost, difficulty);
+    // Build human player list from party slots
+    const humanPlayers: { slot: number; race: Race }[] = [];
+    for (let i = 0; i < party.maxSlots; i++) {
+      const p = party.players[String(i)];
+      if (p) humanPlayers.push({ slot: i, race: p.race });
+    }
+    matchScene.setPartyConfig({
+      humanPlayers,
+      localSlot,
+      seed: party.seed,
+      partyCode: party.code,
+      botDifficulty: difficulty,
+      mapDef,
+    });
     manager.switchTo('match');
   };
 

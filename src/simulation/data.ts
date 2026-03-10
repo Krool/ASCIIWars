@@ -265,6 +265,8 @@ export const PLAYER_COLORS: string[] = [
   '#9c27b0',  // P1 - Purple (Purple Buildings)
   '#ff1744',  // P2 - Red (Red Buildings)
   '#fdd835',  // P3 - Yellow (Yellow Buildings)
+  '#00bfa5',  // P4 - Teal (Black Buildings)
+  '#ff6d00',  // P5 - Orange (shares sprite variant)
 ];
 
 // Harvester constants

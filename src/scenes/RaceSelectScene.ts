@@ -127,8 +127,8 @@ export class RaceSelectScene implements Scene {
   }
 
   private getBoxLayout(): { x: number; y: number; w: number; h: number }[] {
-    const w = this.canvas.width;
-    const h = this.canvas.height;
+    const w = this.canvas.clientWidth;
+    const h = this.canvas.clientHeight;
     const headerH = 70;
     const footerH = 80;
     const availH = h - headerH - footerH;
@@ -158,11 +158,12 @@ export class RaceSelectScene implements Scene {
   }
 
   private isStartButtonAt(cx: number, cy: number): boolean {
-    const w = this.canvas.width;
-    const h = this.canvas.height;
+    const w = this.canvas.clientWidth;
+    const h = this.canvas.clientHeight;
     const btnW = 260;
     const btnH = 56;
-    return cx >= (w - btnW) / 2 && cx <= (w + btnW) / 2 && cy >= h - 72 && cy <= h - 72 + btnH;
+    const pad = 8;
+    return cx >= (w - btnW) / 2 - pad && cx <= (w + btnW) / 2 + pad && cy >= h - 72 - pad && cy <= h - 72 + btnH + pad;
   }
 
   private getBoxIndexAt(cx: number, cy: number): number {
@@ -177,8 +178,8 @@ export class RaceSelectScene implements Scene {
   update(_dt: number): void { this.tick++; }
 
   render(ctx: CanvasRenderingContext2D): void {
-    const w = ctx.canvas.width;
-    const h = ctx.canvas.height;
+    const w = ctx.canvas.clientWidth;
+    const h = ctx.canvas.clientHeight;
     ctx.imageSmoothingEnabled = false;
 
     // Water background
@@ -223,8 +224,10 @@ export class RaceSelectScene implements Scene {
       ctx.rect(box.x, box.y, box.w, box.h);
       ctx.clip();
 
-      // Wood table 9-slice background (uses Slots variant for small cards)
-      this.ui.drawWoodTable(ctx, box.x, box.y, box.w, box.h);
+      // Wood table 9-slice background — oversized to push dead space outside clip rect
+      const bgPadX = Math.round(box.w * 0.075);
+      const bgPadY = Math.round(box.h * 0.075);
+      this.ui.drawWoodTable(ctx, box.x - bgPadX, box.y - bgPadY, box.w + bgPadX * 2, box.h + bgPadY * 2);
 
       // Selection glow
       if (isSelected) {

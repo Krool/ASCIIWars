@@ -315,13 +315,12 @@ export class UIAssets {
   // Water Background Tiling
   // =================================================================
 
-  drawWaterBg(ctx: CanvasRenderingContext2D, w: number, h: number, time = 0): boolean {
+  drawWaterBg(ctx: CanvasRenderingContext2D, w: number, h: number, _time = 0): boolean {
     const img = this.loadImage(waterBgPng);
     if (!img) return false;
     const tileSize = 64;
-    const offset = (time * 0.02) % tileSize;
-    for (let ty = -tileSize + offset; ty < h + tileSize; ty += tileSize) {
-      for (let tx = -tileSize + offset; tx < w + tileSize; tx += tileSize) {
+    for (let ty = 0; ty < h; ty += tileSize) {
+      for (let tx = 0; tx < w; tx += tileSize) {
         ctx.drawImage(img, tx, ty, tileSize, tileSize);
       }
     }

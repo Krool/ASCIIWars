@@ -1,6 +1,8 @@
 import { Scene, SceneManager } from './Scene';
 import { UIAssets } from '../rendering/UIAssets';
 import { BotDifficultyLevel } from '../simulation/BotAI';
+import { type MapDef } from '../simulation/types';
+import { ALL_MAPS } from '../simulation/maps';
 
 interface DifficultyOption {
   level: BotDifficultyLevel;
@@ -72,17 +74,18 @@ export class DifficultySelectScene implements Scene {
   private manager: SceneManager;
   private canvas: HTMLCanvasElement;
   private ui: UIAssets;
-  private onConfirm: (level: BotDifficultyLevel) => void;
+  private onConfirm: (level: BotDifficultyLevel, mapDef: MapDef) => void;
   private selectedIndex = 1; // default Medium
   private hoverIndex = -1;
   private tick = 0;
+  private mapIndex = 0; // index into ALL_MAPS
 
   private clickHandler: ((e: MouseEvent) => void) | null = null;
   private moveHandler: ((e: MouseEvent) => void) | null = null;
   private keyHandler: ((e: KeyboardEvent) => void) | null = null;
   private touchHandler: ((e: TouchEvent) => void) | null = null;
 
-  constructor(manager: SceneManager, canvas: HTMLCanvasElement, ui: UIAssets, onConfirm: (level: BotDifficultyLevel) => void) {
+  constructor(manager: SceneManager, canvas: HTMLCanvasElement, ui: UIAssets, onConfirm: (level: BotDifficultyLevel, mapDef: MapDef) => void) {
     this.manager = manager;
     this.canvas = canvas;
     this.ui = ui;
@@ -99,22 +102,31 @@ export class DifficultySelectScene implements Scene {
       if (e.key === 'ArrowDown' || e.key === 's') {
         this.selectedIndex = Math.min(DIFFICULTIES.length - 1, this.selectedIndex + 1);
       }
+      if (e.key === 'Tab' || e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        e.preventDefault();
+        this.mapIndex = (this.mapIndex + 1) % ALL_MAPS.length;
+      }
       if (e.key === 'Enter' || e.key === ' ') {
-        this.onConfirm(DIFFICULTIES[this.selectedIndex].level);
+        this.onConfirm(DIFFICULTIES[this.selectedIndex].level, ALL_MAPS[this.mapIndex]);
       }
       if (e.key === 'Escape') this.manager.switchTo('raceSelect');
     };
 
     this.clickHandler = (e) => {
       const [cx, cy] = this.toCanvas(e.clientX, e.clientY);
+      // Map toggle click
+      if (this.isMapToggleAt(cx, cy)) {
+        this.mapIndex = (this.mapIndex + 1) % ALL_MAPS.length;
+        return;
+      }
       const idx = this.getCardIndexAt(cx, cy);
       if (idx >= 0) {
         this.selectedIndex = idx;
-        this.onConfirm(DIFFICULTIES[idx].level);
+        this.onConfirm(DIFFICULTIES[idx].level, ALL_MAPS[this.mapIndex]);
         return;
       }
       if (this.isStartButtonAt(cx, cy)) {
-        this.onConfirm(DIFFICULTIES[this.selectedIndex].level);
+        this.onConfirm(DIFFICULTIES[this.selectedIndex].level, ALL_MAPS[this.mapIndex]);
       }
     };
 
@@ -128,14 +140,18 @@ export class DifficultySelectScene implements Scene {
       const touch = e.touches[0];
       if (!touch) return;
       const [cx, cy] = this.toCanvas(touch.clientX, touch.clientY);
+      if (this.isMapToggleAt(cx, cy)) {
+        this.mapIndex = (this.mapIndex + 1) % ALL_MAPS.length;
+        return;
+      }
       const idx = this.getCardIndexAt(cx, cy);
       if (idx >= 0) {
         this.selectedIndex = idx;
-        this.onConfirm(DIFFICULTIES[idx].level);
+        this.onConfirm(DIFFICULTIES[idx].level, ALL_MAPS[this.mapIndex]);
         return;
       }
       if (this.isStartButtonAt(cx, cy)) {
-        this.onConfirm(DIFFICULTIES[this.selectedIndex].level);
+        this.onConfirm(DIFFICULTIES[this.selectedIndex].level, ALL_MAPS[this.mapIndex]);
       }
     };
 
@@ -166,13 +182,14 @@ export class DifficultySelectScene implements Scene {
   }
 
   private getCardLayout(): { x: number; y: number; w: number; h: number }[] {
-    const w = this.canvas.width;
-    const h = this.canvas.height;
+    const w = this.canvas.clientWidth;
+    const h = this.canvas.clientHeight;
     const cardW = Math.min(w * 0.8, 420);
     const gap = 10;
-    const cardH = Math.min((h - 160 - gap * 3) / 4, 90);
+    const topMargin = 110; // extra room for map toggle
+    const cardH = Math.min((h - topMargin - 80 - gap * 3) / 4, 90);
     const totalH = DIFFICULTIES.length * cardH + (DIFFICULTIES.length - 1) * gap;
-    const startY = 80 + (h - 160 - totalH) / 2;
+    const startY = topMargin + (h - topMargin - 80 - totalH) / 2;
     const startX = (w - cardW) / 2;
 
     return DIFFICULTIES.map((_, i) => ({
@@ -185,26 +202,40 @@ export class DifficultySelectScene implements Scene {
 
   private getCardIndexAt(cx: number, cy: number): number {
     const cards = this.getCardLayout();
+    const pad = 4;
     for (let i = 0; i < cards.length; i++) {
       const c = cards[i];
-      if (cx >= c.x && cx <= c.x + c.w && cy >= c.y && cy <= c.y + c.h) return i;
+      if (cx >= c.x - pad && cx <= c.x + c.w + pad && cy >= c.y - pad && cy <= c.y + c.h + pad) return i;
     }
     return -1;
   }
 
   private isStartButtonAt(cx: number, cy: number): boolean {
-    const w = this.canvas.width;
-    const h = this.canvas.height;
+    const w = this.canvas.clientWidth;
+    const h = this.canvas.clientHeight;
     const btnW = 260;
     const btnH = 50;
-    return cx >= (w - btnW) / 2 && cx <= (w + btnW) / 2 && cy >= h - 66 && cy <= h - 66 + btnH;
+    const pad = 8;
+    return cx >= (w - btnW) / 2 - pad && cx <= (w + btnW) / 2 + pad && cy >= h - 66 - pad && cy <= h - 66 + btnH + pad;
+  }
+
+  private getMapToggleLayout(): { x: number; y: number; w: number; h: number } {
+    const w = this.canvas.clientWidth;
+    const toggleW = Math.min(w * 0.5, 220);
+    const toggleH = 36;
+    return { x: (w - toggleW) / 2, y: 56, w: toggleW, h: toggleH };
+  }
+
+  private isMapToggleAt(cx: number, cy: number): boolean {
+    const t = this.getMapToggleLayout();
+    return cx >= t.x && cx <= t.x + t.w && cy >= t.y && cy <= t.y + t.h;
   }
 
   // ─── Render ───
 
   render(ctx: CanvasRenderingContext2D): void {
-    const w = ctx.canvas.width;
-    const h = ctx.canvas.height;
+    const w = ctx.canvas.clientWidth;
+    const h = ctx.canvas.clientHeight;
     ctx.imageSmoothingEnabled = false;
 
     // Water background
@@ -228,11 +259,32 @@ export class DifficultySelectScene implements Scene {
     ctx.fillStyle = '#fff';
     ctx.fillText('CHOOSE DIFFICULTY', w / 2, ribbonY + ribbonH * 0.58);
 
-    // Hint
+    // Map toggle
     const hintSize = Math.max(9, Math.min(w / 55, 12));
+    const mt = this.getMapToggleLayout();
+    const mapDef = ALL_MAPS[this.mapIndex];
+    const mapLabel = `MAP: ${mapDef.name.toUpperCase()} (${mapDef.playersPerTeam}v${mapDef.playersPerTeam})`;
+    const mtBgPadX = Math.round(mt.w * 0.05);
+    const mtBgPadY = Math.round(mt.h * 0.05);
+    this.ui.drawWoodTable(ctx, mt.x - mtBgPadX, mt.y - mtBgPadY, mt.w + mtBgPadX * 2, mt.h + mtBgPadY * 2);
+    ctx.font = `bold ${Math.max(11, Math.min(mt.h * 0.35, 14))}px monospace`;
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffd740';
+    ctx.fillText(mapLabel, mt.x + mt.w / 2, mt.y + mt.h * 0.55);
+    // Arrow indicators
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    ctx.font = `bold ${Math.max(12, mt.h * 0.4)}px monospace`;
+    ctx.fillText('<', mt.x + 10, mt.y + mt.h * 0.58);
+    ctx.fillText('>', mt.x + mt.w - 10, mt.y + mt.h * 0.58);
+    // Sub-hint
+    ctx.font = `${Math.max(8, hintSize - 1)}px monospace`;
+    ctx.fillStyle = 'rgba(255,255,255,0.4)';
+    ctx.fillText('Tab/Arrows to change map', w / 2, mt.y + mt.h + 10);
+
+    // Hint
     ctx.font = `${hintSize}px monospace`;
     ctx.fillStyle = 'rgba(255,255,255,0.5)';
-    ctx.fillText('Up/Down + Enter  |  Click to select', w / 2, ribbonY + ribbonH + 12);
+    ctx.fillText('Up/Down + Enter  |  Click to select', w / 2, mt.y + mt.h + 22);
 
     // Difficulty cards
     const cards = this.getCardLayout();
@@ -243,8 +295,10 @@ export class DifficultySelectScene implements Scene {
       const isSelected = i === this.selectedIndex;
       const isHover = i === this.hoverIndex;
 
-      // Card background
-      this.ui.drawWoodTable(ctx, card.x, card.y, card.w, card.h);
+      // Card background — oversized to account for 9-slice dead space around edges
+      const bgPadX = Math.round(card.w * 0.075);
+      const bgPadY = Math.round(card.h * 0.075);
+      this.ui.drawWoodTable(ctx, card.x - bgPadX, card.y - bgPadY, card.w + bgPadX * 2, card.h + bgPadY * 2);
 
       // Selection glow
       if (isSelected) {

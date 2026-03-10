@@ -166,8 +166,8 @@ export class SoundManager {
 
     if (worldTileX === undefined || worldTileY === undefined) return zoomGain;
 
-    const camCX = (camera.x + canvas.width  / (2 * camera.zoom)) / TILE_SIZE;
-    const camCY = (camera.y + canvas.height / (2 * camera.zoom)) / TILE_SIZE;
+    const camCX = (camera.x + (canvas.clientWidth || canvas.width)  / (2 * camera.zoom)) / TILE_SIZE;
+    const camCY = (camera.y + (canvas.clientHeight || canvas.height) / (2 * camera.zoom)) / TILE_SIZE;
 
     const dx = worldTileX - camCX;
     const dy = worldTileY - camCY;

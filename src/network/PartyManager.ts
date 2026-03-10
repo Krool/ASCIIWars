@@ -1,4 +1,5 @@
 // Party creation, joining, and real-time sync via Firebase RTDB
+// Supports N-player parties (up to mapDef.maxPlayers human slots)
 import { ref, set, get, onValue, remove, onDisconnect, Unsubscribe, query, orderByChild, equalTo } from 'firebase/database';
 import { getDb, getUserId } from './FirebaseService';
 import { Race } from '../simulation/types';
@@ -9,14 +10,40 @@ export interface PartyPlayer {
   race: Race;
 }
 
+/**
+ * Party state synced via Firebase RTDB.
+ * `players` is an object keyed by slot index ("0", "1", ...).
+ * Slot 0 is always the host. Guests fill the next available slot.
+ * Empty slots (null/missing) become bots when the game starts.
+ */
 export interface PartyState {
   code: string;
   hostUid: string;
-  host: PartyPlayer;
-  guest: PartyPlayer | null;
+  players: { [slot: string]: PartyPlayer }; // keyed by slot index
+  maxSlots: number;  // max human players (from mapDef.maxPlayers)
+  mapId: string;     // map selection (host controls)
   status: 'waiting' | 'starting' | 'in_game' | 'ended';
   seed: number;
   difficulty?: string; // BotDifficultyLevel value, set by host
+}
+
+/** Helper to get the ordered list of occupied player slots. */
+export function getPartyPlayers(ps: PartyState): { slot: number; player: PartyPlayer }[] {
+  const result: { slot: number; player: PartyPlayer }[] = [];
+  for (let i = 0; i < ps.maxSlots; i++) {
+    const p = ps.players[String(i)];
+    if (p) result.push({ slot: i, player: p });
+  }
+  return result;
+}
+
+/** How many humans are currently in the party. */
+export function getPartyPlayerCount(ps: PartyState): number {
+  let count = 0;
+  for (let i = 0; i < ps.maxSlots; i++) {
+    if (ps.players[String(i)]) count++;
+  }
+  return count;
 }
 
 export type PartyListener = (state: PartyState | null) => void;
@@ -46,6 +73,8 @@ export class PartyManager {
   /** Explicitly tracks whether this client created or joined the party.
    *  UID-based detection fails when two tabs share the same anonymous auth. */
   private _isHost = false;
+  /** Which player slot this client occupies (0 = host, 1+ = guests). */
+  private _localSlot = 0;
 
   constructor() {
     this._localName = this.loadName();
@@ -55,9 +84,8 @@ export class PartyManager {
   get code(): string | null { return this.partyCode; }
   get isHost(): boolean { return this._isHost; }
   get localName(): string { return this._localName; }
-
-  /** Which Firebase slot this client owns: 'host' or 'guest'. */
-  get localSlot(): 'host' | 'guest' { return this._isHost ? 'host' : 'guest'; }
+  /** Numeric slot index this client occupies. */
+  get localSlotIndex(): number { return this._localSlot; }
 
   set localName(name: string) {
     this._localName = name;
@@ -65,7 +93,7 @@ export class PartyManager {
     // Push name update if in a party
     if (this._state && this.partyCode) {
       const db = getDb();
-      set(ref(db, `parties/${this.partyCode}/${this.localSlot}/name`), name);
+      set(ref(db, `parties/${this.partyCode}/players/${this._localSlot}/name`), name);
     }
   }
 
@@ -86,7 +114,7 @@ export class PartyManager {
     for (const fn of this.listeners) fn(this._state);
   }
 
-  async createParty(race: Race): Promise<string> {
+  async createParty(race: Race, mapId = 'duel'): Promise<string> {
     await this.leaveParty();
 
     const db = getDb();
@@ -100,11 +128,15 @@ export class PartyManager {
       code = generateCode();
     }
 
+    // Determine max slots from map (import-free: just pass the number)
+    const maxSlots = mapId === 'skirmish' ? 6 : 4;
+
     const party: PartyState = {
       code,
       hostUid: uid,
-      host: { uid, name: this._localName, race },
-      guest: null,
+      players: { '0': { uid, name: this._localName, race } },
+      maxSlots,
+      mapId,
       status: 'waiting',
       seed: Math.floor(Math.random() * 2147483647),
     };
@@ -115,6 +147,7 @@ export class PartyManager {
     onDisconnect(ref(db, `parties/${code}`)).remove();
 
     this._isHost = true;
+    this._localSlot = 0;
     this.partyCode = code;
     this.subscribeToParty(code);
     return code;
@@ -130,16 +163,23 @@ export class PartyManager {
     if (!snap.exists()) throw new Error('Party not found');
 
     const data = snap.val() as PartyState;
-    if (data.guest) throw new Error('Party is full');
     if (data.status !== 'waiting') throw new Error('Party already started');
 
-    const guest: PartyPlayer = { uid, name: this._localName, race };
-    await set(ref(db, `parties/${code}/guest`), guest);
+    // Find first empty slot (slot 0 is host, start from 1)
+    let freeSlot = -1;
+    for (let i = 1; i < data.maxSlots; i++) {
+      if (!data.players[String(i)]) { freeSlot = i; break; }
+    }
+    if (freeSlot < 0) throw new Error('Party is full');
 
-    // Clean up guest slot if guest disconnects
-    onDisconnect(ref(db, `parties/${code}/guest`)).remove();
+    const player: PartyPlayer = { uid, name: this._localName, race };
+    await set(ref(db, `parties/${code}/players/${freeSlot}`), player);
+
+    // Clean up our slot if we disconnect
+    onDisconnect(ref(db, `parties/${code}/players/${freeSlot}`)).remove();
 
     this._isHost = false;
+    this._localSlot = freeSlot;
     this.partyCode = code;
     this.subscribeToParty(code);
   }
@@ -160,8 +200,8 @@ export class PartyManager {
         // Host leaves → destroy party
         await remove(ref(db, `parties/${code}`));
       } else {
-        // Guest leaves → clear guest slot
-        await set(ref(db, `parties/${code}/guest`), null);
+        // Guest leaves → clear their slot
+        await remove(ref(db, `parties/${code}/players/${this._localSlot}`));
       }
     } catch {
       // Party may already be gone
@@ -170,13 +210,14 @@ export class PartyManager {
     this.partyCode = null;
     this._state = null;
     this._isHost = false;
+    this._localSlot = 0;
     this.notify();
   }
 
   async updateRace(race: Race): Promise<void> {
     if (!this.partyCode || !this._state) return;
     const db = getDb();
-    await set(ref(db, `parties/${this.partyCode}/${this.localSlot}/race`), race);
+    await set(ref(db, `parties/${this.partyCode}/players/${this._localSlot}/race`), race);
   }
 
   async updateDifficulty(difficulty: string): Promise<void> {
@@ -185,14 +226,31 @@ export class PartyManager {
     await set(ref(db, `parties/${this.partyCode}/difficulty`), difficulty);
   }
 
+  async updateMap(mapId: string): Promise<void> {
+    if (!this.partyCode || !this._state || !this._isHost) return;
+    const db = getDb();
+    const maxSlots = mapId === 'skirmish' ? 6 : 4;
+    await set(ref(db, `parties/${this.partyCode}/mapId`), mapId);
+    await set(ref(db, `parties/${this.partyCode}/maxSlots`), maxSlots);
+    // If shrinking, remove excess players
+    if (maxSlots < this._state.maxSlots) {
+      for (let i = maxSlots; i < this._state.maxSlots; i++) {
+        if (this._state.players[String(i)]) {
+          await remove(ref(db, `parties/${this.partyCode}/players/${i}`));
+        }
+      }
+    }
+  }
+
   async startGame(): Promise<void> {
     if (!this.partyCode || !this._state) return;
     if (!this.isHost) return;
-    if (!this._state.guest) return;
+    // Need at least 2 humans to start
+    if (getPartyPlayerCount(this._state) < 2) return;
     await set(ref(getDb(), `parties/${this.partyCode}/status`), 'starting');
   }
 
-  /** Find an open party (status=waiting, no guest) and join it.
+  /** Find an open party (status=waiting, has empty slots) and join it.
    *  Returns true if joined, false if none found. */
   async findAndJoinGame(race: Race): Promise<boolean> {
     await this.leaveParty();
@@ -204,12 +262,16 @@ export class PartyManager {
 
     if (!snap.exists()) return false;
 
-    // Collect all candidate parties (no guest, not ours)
+    // Collect all candidate parties (has empty slots, not ours)
     const candidates: string[] = [];
     snap.forEach((child) => {
       const data = child.val() as PartyState;
-      if (!data.guest && data.hostUid !== uid && child.key) {
-        candidates.push(child.key);
+      if (data.hostUid !== uid && child.key) {
+        // Check if there's an empty slot
+        const playerCount = getPartyPlayerCount(data);
+        if (playerCount < data.maxSlots) {
+          candidates.push(child.key);
+        }
       }
     });
 
@@ -236,7 +298,19 @@ export class PartyManager {
         this.notify();
         return;
       }
-      this._state = snap.val() as PartyState;
+      const raw = snap.val();
+      // Normalize: Firebase may deliver players as an array or object
+      const state = raw as PartyState;
+      if (!state.players) state.players = {};
+      // Firebase arrays: if players was stored as array, convert to object
+      if (Array.isArray(state.players)) {
+        const obj: { [slot: string]: PartyPlayer } = {};
+        (state.players as (PartyPlayer | null)[]).forEach((p, i) => {
+          if (p) obj[String(i)] = p;
+        });
+        state.players = obj;
+      }
+      this._state = state;
       this.notify();
     });
   }

@@ -2,18 +2,16 @@
 //
 // Architecture:
 // - Simulation is grouped into "turns" of TICKS_PER_TURN ticks (200ms).
-// - At each turn boundary, both clients exchange command batches via Firebase RTDB.
+// - At each turn boundary, ALL human clients exchange command batches via Firebase RTDB.
 // - During a turn, all ticks execute synchronously with pre-exchanged commands.
 // - State hash is exchanged every HASH_CHECK_INTERVAL turns for desync detection.
 //
 // Data layout in Firebase:
-//   games/{partyCode}/ready/{0|1}   — true when that player is ready
-//   games/{partyCode}/turns/{turn}/{0|1} — { cmds: [...], hash?: number }
+//   games/{partyCode}/ready/{slotId}   — true when that player is ready
+//   games/{partyCode}/turns/{turn}/{slotId} — { cmds: [...], hash?: number }
 //
-// Why Firebase instead of WebRTC:
-// - No ICE/STUN/TURN configuration needed — works on any network, any browser, iOS
-// - Firebase RTDB latency (~50-150ms) is well within the 200ms turn window
-// - Already authenticated via the party system
+// Supports 2-6 human players. Each player writes to their own slot,
+// listens to all other human players' slots.
 
 import { ref, set, onValue, remove, onDisconnect, Unsubscribe } from 'firebase/database';
 import { getDb } from './FirebaseService';
@@ -35,9 +33,12 @@ export type DisconnectCallback = () => void;
 
 export class CommandSync {
   private partyCode: string;
-  private localPlayerId: number; // 0 = host, 1 = guest
-  private remotePlayerId: number;
-  private turnBuffer: Map<number, { local?: TurnData; remote?: TurnData }> = new Map();
+  private localSlotId: number; // this client's player slot
+  private remoteSlotIds: number[]; // all OTHER human player slots
+  private allHumanSlots: number[]; // all human slots including local, sorted
+
+  // Per-turn buffer: for each turn, track data from each human slot
+  private turnBuffer: Map<number, Map<number, TurnData>> = new Map();
   private resolvers: Map<number, () => void> = new Map();
   private connected = false;
   private _latencyMs = 0;
@@ -52,8 +53,7 @@ export class CommandSync {
   private _connectedResolve!: () => void;
   private _connectedReject!: (err: Error) => void;
   private _settled = false;
-  private remoteReady = false;
-  private localReady = false;
+  private readyPlayers = new Set<number>();
 
   // Track which turns we've already subscribed to
   private subscribedTurns = new Set<number>();
@@ -66,27 +66,33 @@ export class CommandSync {
   /** Current estimated round-trip latency in ms. */
   get latencyMs(): number { return this._latencyMs; }
 
-  /** True once both sides have exchanged ready signals. */
+  /** True once all human players have exchanged ready signals. */
   get isConnected(): boolean { return this.connected; }
 
-  constructor(partyCode: string, localPlayerId: number) {
+  /**
+   * @param partyCode - Firebase party code
+   * @param localSlotId - this client's player slot index
+   * @param humanSlotIds - ALL human player slot indices (including local)
+   */
+  constructor(partyCode: string, localSlotId: number, humanSlotIds: number[]) {
     this.partyCode = partyCode;
-    this.localPlayerId = localPlayerId;
-    this.remotePlayerId = localPlayerId === 0 ? 1 : 0;
+    this.localSlotId = localSlotId;
+    this.allHumanSlots = [...humanSlotIds].sort((a, b) => a - b);
+    this.remoteSlotIds = this.allHumanSlots.filter(id => id !== localSlotId);
     this._connectedPromise = new Promise((resolve, reject) => {
       this._connectedResolve = resolve;
       this._connectedReject = reject;
     });
   }
 
-  /** Returns a promise that resolves when both peers are connected and ready. */
+  /** Returns a promise that resolves when all human peers are connected and ready. */
   whenReady(): Promise<void> {
     return this._connectedPromise;
   }
 
   /** Initialize Firebase listeners and exchange ready signals. */
   start(): void {
-    console.log(`[CommandSync] Starting as ${this.localPlayerId === 0 ? 'HOST' : 'GUEST'}, party=${this.partyCode}`);
+    console.log(`[CommandSync] Starting as slot ${this.localSlotId}, humans=${this.allHumanSlots.join(',')}, party=${this.partyCode}`);
 
     const db = getDb();
     const gameRef = `games/${this.partyCode}`;
@@ -101,49 +107,52 @@ export class CommandSync {
       }
     }, CONNECTION_TIMEOUT_MS);
 
-    // Clean up game data if we disconnect
-    onDisconnect(ref(db, `${gameRef}/ready/${this.localPlayerId}`)).remove();
+    // Clean up our ready signal if we disconnect
+    onDisconnect(ref(db, `${gameRef}/ready/${this.localSlotId}`)).remove();
 
     // Write our ready signal
-    set(ref(db, `${gameRef}/ready/${this.localPlayerId}`), true);
-    this.localReady = true;
+    set(ref(db, `${gameRef}/ready/${this.localSlotId}`), true);
+    this.readyPlayers.add(this.localSlotId);
 
-    // Listen for remote player's ready signal
-    const readyUnsub = onValue(ref(db, `${gameRef}/ready/${this.remotePlayerId}`), (snap) => {
-      if (snap.val() === true && !this.remoteReady) {
-        this.remoteReady = true;
-        this.checkBothReady();
-      }
-      if (snap.val() === null && this.connected) {
-        // Remote player disconnected (their onDisconnect fired)
-        this.connected = false;
-        console.warn('[CommandSync] Remote player disconnected');
-        this.onDisconnect?.();
-      }
-    });
-    this.unsubs.push(readyUnsub);
+    // Listen for each remote player's ready signal
+    for (const remoteId of this.remoteSlotIds) {
+      const readyUnsub = onValue(ref(db, `${gameRef}/ready/${remoteId}`), (snap) => {
+        if (snap.val() === true && !this.readyPlayers.has(remoteId)) {
+          this.readyPlayers.add(remoteId);
+          this.checkAllReady();
+        }
+        if (snap.val() === null && this.connected) {
+          // Remote player disconnected
+          this.connected = false;
+          console.warn(`[CommandSync] Player ${remoteId} disconnected`);
+          this.onDisconnect?.();
+        }
+      });
+      this.unsubs.push(readyUnsub);
+    }
 
     // Start latency measurement via Firebase server time
     this.pingInterval = setInterval(() => this.measureLatency(), 3000);
   }
 
-  private checkBothReady(): void {
-    if (this.localReady && this.remoteReady && !this._settled) {
+  private checkAllReady(): void {
+    // All human players must be ready
+    const allReady = this.allHumanSlots.every(id => this.readyPlayers.has(id));
+    if (allReady && !this._settled) {
       this._settled = true;
       this.connected = true;
       if (this.connectionTimeout) {
         clearTimeout(this.connectionTimeout);
         this.connectionTimeout = null;
       }
-      console.log('[CommandSync] Both peers ready — game can start');
+      console.log(`[CommandSync] All ${this.allHumanSlots.length} peers ready — game can start`);
       this._connectedResolve();
     }
   }
 
   private async measureLatency(): Promise<void> {
-    // Approximate latency by measuring a Firebase write round-trip
     const db = getDb();
-    const pingRef = `games/${this.partyCode}/ping/${this.localPlayerId}`;
+    const pingRef = `games/${this.partyCode}/ping/${this.localSlotId}`;
     const start = Date.now();
     try {
       await set(ref(db, pingRef), start);
@@ -153,57 +162,74 @@ export class CommandSync {
     }
   }
 
-  /** Subscribe to the remote player's data for a specific turn.
+  /** Subscribe to all remote players' data for a specific turn.
    *  Safe to call multiple times — deduplicates automatically. */
   subscribeToTurn(turn: number): void {
     if (this.subscribedTurns.has(turn)) return;
     this.subscribedTurns.add(turn);
 
     const db = getDb();
-    const turnRef = `games/${this.partyCode}/turns/${turn}/${this.remotePlayerId}`;
 
-    const unsub = onValue(ref(db, turnRef), (snap) => {
-      const data = snap.val() as TurnData | null;
-      if (!data) return;
+    for (const remoteId of this.remoteSlotIds) {
+      const turnRef = `games/${this.partyCode}/turns/${turn}/${remoteId}`;
 
-      // Buffer the remote turn data
-      const entry = this.turnBuffer.get(turn) ?? {};
-      entry.remote = data;
-      this.turnBuffer.set(turn, entry);
+      const unsub = onValue(ref(db, turnRef), (snap) => {
+        const data = snap.val() as TurnData | null;
+        if (!data) return;
 
-      // If local is also ready, resolve anyone waiting
-      if (entry.local) {
-        const resolver = this.resolvers.get(turn);
-        if (resolver) {
-          this.resolvers.delete(turn);
-          resolver();
+        // Buffer the remote turn data
+        let turnMap = this.turnBuffer.get(turn);
+        if (!turnMap) {
+          turnMap = new Map();
+          this.turnBuffer.set(turn, turnMap);
         }
-      }
+        turnMap.set(remoteId, data);
 
-      // Unsubscribe from this turn — we got what we need
-      unsub();
-      this.unsubs = this.unsubs.filter(u => u !== unsub);
-      this.subscribedTurns.delete(turn);
-    });
-    this.unsubs.push(unsub);
+        // Check if all players (including local) have submitted
+        if (this.isTurnComplete(turn)) {
+          const resolver = this.resolvers.get(turn);
+          if (resolver) {
+            this.resolvers.delete(turn);
+            resolver();
+          }
+        }
+
+        // Unsubscribe from this specific remote+turn combo
+        unsub();
+        this.unsubs = this.unsubs.filter(u => u !== unsub);
+      });
+      this.unsubs.push(unsub);
+    }
+
+    // Clean up the subscribedTurns tracking when all remotes resolve
+    // (handled implicitly — we check isTurnComplete)
   }
 
-  /** Send local commands for a turn to the remote peer via Firebase. */
+  /** Check if all human players have submitted data for this turn. */
+  private isTurnComplete(turn: number): boolean {
+    const turnMap = this.turnBuffer.get(turn);
+    if (!turnMap) return false;
+    return this.allHumanSlots.every(id => turnMap.has(id));
+  }
+
+  /** Send local commands for a turn to remote peers via Firebase. */
   async pushTurn(turn: number, commands: GameCommand[], hash?: number): Promise<void> {
-    // Firebase RTDB strips empty arrays, so store null instead to keep the node non-empty
     const data: TurnData = { cmds: commands.length > 0 ? commands : null, t: turn };
     if (hash !== undefined) data.hash = hash;
 
     // Buffer locally
-    const entry = this.turnBuffer.get(turn) ?? {};
-    entry.local = data;
-    this.turnBuffer.set(turn, entry);
+    let turnMap = this.turnBuffer.get(turn);
+    if (!turnMap) {
+      turnMap = new Map();
+      this.turnBuffer.set(turn, turnMap);
+    }
+    turnMap.set(this.localSlotId, data);
 
     // Subscribe to remote BEFORE writing — so we're listening while our write is in flight
     this.subscribeToTurn(turn);
 
-    // If remote already arrived, resolve anyone waiting
-    if (entry.remote) {
+    // If turn is already complete, resolve anyone waiting
+    if (this.isTurnComplete(turn)) {
       const resolver = this.resolvers.get(turn);
       if (resolver) {
         this.resolvers.delete(turn);
@@ -213,7 +239,7 @@ export class CommandSync {
 
     // Write to Firebase (fire-and-forget — don't await)
     const db = getDb();
-    set(ref(db, `games/${this.partyCode}/turns/${turn}/${this.localPlayerId}`), data).catch((err) => {
+    set(ref(db, `games/${this.partyCode}/turns/${turn}/${this.localSlotId}`), data).catch((err) => {
       console.error(`[CommandSync] Failed to push turn ${turn}:`, err);
     });
     this.highestWrittenTurn = Math.max(this.highestWrittenTurn, turn);
@@ -231,26 +257,23 @@ export class CommandSync {
     return turn % HASH_CHECK_INTERVAL === 0;
   }
 
-  /** Wait until both players have submitted data for the given turn. */
+  /** Wait until all human players have submitted data for the given turn. */
   waitForTurn(turn: number, timeoutMs = 5000): Promise<{ commands: GameCommand[]; remoteHash?: number }> {
-    // Make sure we're subscribed to this turn's remote data
     this.subscribeToTurn(turn);
 
     return new Promise((resolve) => {
-      const entry = this.turnBuffer.get(turn);
-      if (entry?.local && entry?.remote) {
+      if (this.isTurnComplete(turn)) {
         resolve(this.collectTurn(turn));
         return;
       }
 
       const timer = setTimeout(() => {
         this.resolvers.delete(turn);
-        const entry2 = this.turnBuffer.get(turn);
-        if (entry2?.remote) {
+        if (this.isTurnComplete(turn)) {
           resolve(this.collectTurn(turn));
         } else {
-          // Remote never arrived — treat as disconnect
-          console.warn(`[CommandSync] Turn ${turn} timeout — remote data missing, treating as disconnect`);
+          // Some remote(s) never arrived — treat as disconnect
+          console.warn(`[CommandSync] Turn ${turn} timeout — missing remote data, treating as disconnect`);
           this.connected = false;
           this.onDisconnect?.();
           resolve(this.collectTurn(turn));
@@ -265,18 +288,23 @@ export class CommandSync {
   }
 
   private collectTurn(turn: number): { commands: GameCommand[]; remoteHash?: number } {
-    const entry = this.turnBuffer.get(turn);
-    if (!entry) return { commands: [] };
+    const turnMap = this.turnBuffer.get(turn);
+    if (!turnMap) return { commands: [] };
 
-    // CRITICAL: Both clients must apply commands in the same order.
-    // Always: P0 (host) commands first, then P1 (guest) commands.
-    const hostData = this.localPlayerId === 0 ? entry.local : entry.remote;
-    const guestData = this.localPlayerId === 0 ? entry.remote : entry.local;
+    // CRITICAL: All clients must apply commands in the same order.
+    // Always sort by slot ID (ascending) for determinism.
     const allCmds: GameCommand[] = [];
-    if (hostData?.cmds) allCmds.push(...hostData.cmds);
-    if (guestData?.cmds) allCmds.push(...guestData.cmds);
+    let remoteHash: number | undefined;
 
-    const remoteHash = entry.remote?.hash;
+    for (const slotId of this.allHumanSlots) {
+      const data = turnMap.get(slotId);
+      if (data?.cmds) allCmds.push(...data.cmds);
+      // Use any remote hash for desync detection
+      if (slotId !== this.localSlotId && data?.hash !== undefined) {
+        remoteHash = data.hash;
+      }
+    }
+
     return { commands: allCmds, remoteHash };
   }
 

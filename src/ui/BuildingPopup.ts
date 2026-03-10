@@ -134,7 +134,8 @@ export class BuildingPopup {
   }
 
   private hitTest(cx: number, cy: number, r: { x: number; y: number; w: number; h: number }): boolean {
-    return r.w > 0 && cx >= r.x && cx < r.x + r.w && cy >= r.y && cy < r.y + r.h;
+    const pad = 6;
+    return r.w > 0 && cx >= r.x - pad && cx < r.x + r.w + pad && cy >= r.y - pad && cy < r.y + r.h + pad;
   }
 
   draw(
@@ -196,7 +197,7 @@ export class BuildingPopup {
     this.statsBtnRect = { x: 0, y: 0, w: 0, h: 0 };
 
     ctx.save();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.setTransform(window.devicePixelRatio || 1, 0, 0, window.devicePixelRatio || 1, 0, 0);
 
     // === Background panel (WoodTable 9-slice) — draw oversized for visual padding ===
     const bgPadX = Math.round(popupW * 0.15);

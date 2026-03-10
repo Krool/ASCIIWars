@@ -83,8 +83,8 @@ export class ProfileScene implements Scene {
   // ─── Layout ───
 
   private getLayout() {
-    const W = this.canvas.width;
-    const H = this.canvas.height;
+    const W = this.canvas.clientWidth;
+    const H = this.canvas.clientHeight;
     const headerH = 90;
     const tabBarY = 42;
     const tabH = 30;

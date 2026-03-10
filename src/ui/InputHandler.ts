@@ -3,7 +3,7 @@ import { Camera } from '../rendering/Camera';
 import { Renderer } from '../rendering/Renderer';
 import {
   BuildingType, TILE_SIZE, BUILD_GRID_COLS, BUILD_GRID_ROWS, SHARED_ALLEY_COLS, SHARED_ALLEY_ROWS, Lane,
-  HarvesterAssignment, Team, ZONES, MAP_WIDTH, MAP_HEIGHT, Race, UnitState, HUT_GRID_COLS,
+  HarvesterAssignment, Team, ZONES, Race, UnitState, HUT_GRID_COLS,
 } from '../simulation/types';
 import { getBuildGridOrigin, getTeamAlleyOrigin, getHutGridOrigin } from '../simulation/GameState';
 import { RACE_BUILDING_COSTS, UNIT_STATS, TOWER_STATS, RACE_COLORS } from '../simulation/data';
@@ -59,10 +59,6 @@ export class InputHandler {
   private quickChatRadialActive = false;
   private quickChatRadialCenter: { x: number; y: number } | null = null;
   private quickChatCooldownUntil = 0;
-  private touchRadialTimer: number | null = null;
-  private touchRadialArmed = false;
-  private touchArmCenter: { x: number; y: number } | null = null;
-  private touchArmStartAt = 0;
   private suppressClicksUntil = 0;
   private quickChatToast: { text: string; until: number } | null = null;
   private laneToast: { text: string; until: number } | null = null;
@@ -212,15 +208,15 @@ export class InputHandler {
       if (e.key === 'q' || e.key === 'Q') {
         if (!this.quickChatRadialActive) {
           this.quickChatRadialActive = true;
-          this.quickChatRadialCenter = { x: this.canvas.width / 2, y: this.canvas.height / 2 };
+          this.quickChatRadialCenter = { x: this.canvas.clientWidth / 2, y: this.canvas.clientHeight / 2 };
           this.pointerX = this.quickChatRadialCenter.x;
           this.pointerY = this.quickChatRadialCenter.y;
         }
         return;
       }
       if (e.key === 'p' || e.key === 'P') {
-        const wx = this.camera.x + this.canvas.width / (2 * this.camera.zoom);
-        const wy = this.camera.y + this.canvas.height / (2 * this.camera.zoom);
+        const wx = this.camera.x + this.canvas.clientWidth / (2 * this.camera.zoom);
+        const wy = this.camera.y + this.canvas.clientHeight / (2 * this.camera.zoom);
         this.game.sendCommand({ type: 'ping', playerId: this.pid, x: wx / TILE_SIZE, y: wy / TILE_SIZE });
         return;
       }
@@ -349,9 +345,18 @@ export class InputHandler {
       // Nuke targeting — restricted to own half + mid
       if (this.nukeTargeting) {
         const world = this.eventToWorld(e);
+        const tileX = world.x / TILE_SIZE;
         const tileY = world.y / TILE_SIZE;
         const team = this.game.state.players[this.pid]?.team ?? Team.Bottom;
-        const inRange = team === Team.Bottom ? tileY >= ZONES.MID.start : tileY <= ZONES.MID.end;
+        const md = this.game.state.mapDef;
+        let inRange: boolean;
+        if (md.shapeAxis === 'y') {
+          inRange = team === Team.Bottom ? tileY >= ZONES.MID.start : tileY <= ZONES.MID.end;
+        } else {
+          // Landscape: Team.Bottom(0) = Left side, Team.Top(1) = Right side
+          const midX = Math.floor(md.width / 2);
+          inRange = team === Team.Bottom ? tileX <= midX : tileX >= midX;
+        }
         if (!inRange) return; // click in enemy zone — ignore
         this.game.sendCommand({
           type: 'fire_nuke', playerId: this.pid,
@@ -427,92 +432,33 @@ export class InputHandler {
       });
     }, sig);
 
+    // Touch radial (emote wheel) disabled on mobile — was conflicting with map drag.
+    // Quick chat still accessible via Q key on desktop.
     this.canvas.addEventListener('pointerdown', (e) => {
-      if (e.pointerType !== 'touch' || this.showTutorial) return;
-      this.activeTouchPointers.add(e.pointerId);
-      if (this.activeTouchPointers.size > 1) {
-        this.touchRadialArmed = false;
-        if (this.touchRadialTimer !== null) {
-          window.clearTimeout(this.touchRadialTimer);
-          this.touchRadialTimer = null;
-        }
-        return;
-      }
-      const rect = this.canvas.getBoundingClientRect();
-      const sx = e.clientX - rect.left;
-      const sy = e.clientY - rect.top;
-      const { milY } = this.getTrayLayout();
-      if (sy >= milY - 64) return; // don't arm radial from tray/overlay region
-      if (this.touchRadialTimer !== null) window.clearTimeout(this.touchRadialTimer);
-      this.touchRadialArmed = true;
-      this.pointerX = sx;
-      this.pointerY = sy;
-      this.touchArmCenter = { x: sx, y: sy };
-      this.touchArmStartAt = Date.now();
-      this.touchRadialTimer = window.setTimeout(() => {
-        if (!this.touchRadialArmed) return;
-        this.quickChatRadialActive = true;
-        this.quickChatRadialCenter = this.getClampedRadialCenter(sx, sy);
-        this.touchArmCenter = null;
-      }, this.radialArmMs);
-    }, sig);
-
-    this.canvas.addEventListener('pointermove', (e) => {
       if (e.pointerType !== 'touch') return;
-      const rect = this.canvas.getBoundingClientRect();
-      this.pointerX = e.clientX - rect.left;
-      this.pointerY = e.clientY - rect.top;
+      this.activeTouchPointers.add(e.pointerId);
     }, sig);
 
     this.canvas.addEventListener('pointerup', (e) => {
       if (e.pointerType !== 'touch') return;
       this.activeTouchPointers.delete(e.pointerId);
-      this.touchRadialArmed = false;
-      if (this.touchRadialTimer !== null) {
-        window.clearTimeout(this.touchRadialTimer);
-        this.touchRadialTimer = null;
-      }
-      this.touchArmCenter = null;
-      if (!this.quickChatRadialActive) return;
-      const msg = this.getQuickChatChoiceFromPointer();
-      this.quickChatRadialActive = false;
-      this.quickChatRadialCenter = null;
-      if (msg) this.sendQuickChat(msg);
-      this.suppressClicksUntil = Date.now() + 220;
-      e.preventDefault();
     }, sig);
 
     this.canvas.addEventListener('pointercancel', () => {
       this.activeTouchPointers.clear();
-      this.touchRadialArmed = false;
-      if (this.touchRadialTimer !== null) {
-        window.clearTimeout(this.touchRadialTimer);
-        this.touchRadialTimer = null;
-      }
-      this.quickChatRadialActive = false;
-      this.quickChatRadialCenter = null;
-      this.touchArmCenter = null;
     }, sig);
-  }
-
-  private getClampedRadialCenter(x: number, y: number): { x: number; y: number } {
-    const pad = this.radialSize + (this.radialAccessibility ? 64 : 36);
-    return {
-      x: Math.max(pad, Math.min(this.canvas.width - pad, x)),
-      y: Math.max(pad, Math.min(this.canvas.height - pad, y)),
-    };
   }
 
   /** Pan camera to the build area for a given building type */
   private panToBuildArea(type: BuildingType): void {
     if (type === BuildingType.Tower) {
       const team = this.game.state.players[this.pid]?.team ?? Team.Bottom;
-      const alley = getTeamAlleyOrigin(team);
+      const alley = getTeamAlleyOrigin(team, this.game.state.mapDef);
       const cx = (alley.x + SHARED_ALLEY_COLS / 2) * TILE_SIZE;
       const cy = (alley.y + SHARED_ALLEY_ROWS / 2) * TILE_SIZE;
       this.camera.panTo(cx, cy, 1.8);
     } else {
-      const origin = getBuildGridOrigin(this.pid);
+      const origin = getBuildGridOrigin(this.pid, this.game.state.mapDef);
       const cx = (origin.x + BUILD_GRID_COLS / 2) * TILE_SIZE;
       const cy = (origin.y + BUILD_GRID_ROWS / 2) * TILE_SIZE;
       this.camera.panTo(cx, cy, 1.8);
@@ -521,7 +467,7 @@ export class InputHandler {
 
   /** Pan camera to the harvester hut area */
   private panToHutArea(): void {
-    const origin = getHutGridOrigin(this.pid);
+    const origin = getHutGridOrigin(this.pid, this.game.state.mapDef);
     const cx = (origin.x + HUT_GRID_COLS / 2) * TILE_SIZE;
     const cy = (origin.y + 0.5) * TILE_SIZE;
     this.camera.panTo(cx, cy, 1.8);
@@ -533,8 +479,8 @@ export class InputHandler {
 
     // Check shared tower alley first (only for Tower type)
     if (this.selectedBuilding === BuildingType.Tower) {
-      const team = playerId < 2 ? Team.Bottom : Team.Top;
-      const alley = getTeamAlleyOrigin(team);
+      const team = this.game.state.players[playerId]?.team ?? Team.Bottom;
+      const alley = getTeamAlleyOrigin(team, this.game.state.mapDef);
       const agx = tx - alley.x, agy = ty - alley.y;
       if (agx >= 0 && agx < SHARED_ALLEY_COLS && agy >= 0 && agy < SHARED_ALLEY_ROWS) {
         return { gx: agx, gy: agy, isAlley: true };
@@ -542,7 +488,7 @@ export class InputHandler {
     }
 
     // Military grid
-    const origin = getBuildGridOrigin(playerId);
+    const origin = getBuildGridOrigin(playerId, this.game.state.mapDef);
     const gx = tx - origin.x, gy = ty - origin.y;
     if (gx < 0 || gx >= BUILD_GRID_COLS || gy < 0 || gy >= BUILD_GRID_ROWS) return null;
     return { gx, gy, isAlley: false };
@@ -636,8 +582,8 @@ export class InputHandler {
   }
 
   private drawTutorial(ctx: CanvasRenderingContext2D): void {
-    const W = this.canvas.width;
-    const H = this.canvas.height;
+    const W = this.canvas.clientWidth;
+    const H = this.canvas.clientHeight;
     const compact = W < 920 || H < 760;
 
     // Dim background
@@ -747,12 +693,12 @@ export class InputHandler {
 
   private getHelpButtonRect(): { x: number; y: number; w: number; h: number } {
     const size = 30;
-    return { x: this.canvas.width - size - 10, y: 10, w: size, h: size };
+    return { x: this.canvas.clientWidth - size - 10, y: 10, w: size, h: size };
   }
 
   private getSettingsButtonRect(): { x: number; y: number; w: number; h: number } {
     const size = 30;
-    return { x: this.canvas.width - size * 2 - 18, y: 10, w: size, h: size };
+    return { x: this.canvas.clientWidth - size * 2 - 18, y: 10, w: size, h: size };
   }
 
   private handleHelpButtonClick(e: MouseEvent): boolean {
@@ -819,41 +765,13 @@ export class InputHandler {
   }
 
   private getTrayLayout() {
-    const W = this.canvas.width;
-    const H = this.canvas.height;
+    const W = this.canvas.clientWidth;
+    const H = this.canvas.clientHeight;
     const milH = 68;
     const milY = H - milH;
     // Miner button + 4 military + nuke = 6 buttons total
     const milW = W / 6;
     return { W, H, milH, milY, milW };
-  }
-
-  private getUtilityLayout(milY: number) {
-    const W = this.canvas.width;
-    const utilY = milY - 30;
-    const utilH = 24;
-    const gap = 10;
-    const pad = 10;
-    const maxW = 100;
-    const minW = 82;
-    const total = W - (pad * 2) - gap;
-    const utilW = Math.max(minW, Math.min(maxW, Math.floor(total / 2)));
-    const used = utilW * 2 + gap;
-    const startX = Math.max(pad, Math.floor((W - used) / 2));
-    return {
-      utilY,
-      utilH,
-      pingX: startX,
-      chatX: startX + utilW + gap,
-      utilW,
-    };
-  }
-
-  private queueQuickChatFallback(message: string): void {
-    const now = Date.now();
-    const at = Math.max(now + 20, this.quickChatCooldownUntil + 20);
-    this.queuedQuickChat = { message, at };
-    this.quickChatToast = { text: `Queued: ${message}`, until: now + 900 };
   }
 
   private processQueuedQuickChat(): void {
@@ -927,33 +845,7 @@ export class InputHandler {
     const cy = e.clientY - rect.top;
     const player = this.game.state.players[this.pid];
 
-    // Compact utility buttons above tray (mobile-friendly)
-    const util = this.getUtilityLayout(milY);
-    if (cy >= util.utilY && cy < util.utilY + util.utilH) {
-      if (cx >= util.pingX && cx < util.pingX + util.utilW) {
-        const wx = this.camera.x + this.canvas.width / (2 * this.camera.zoom);
-        const wy = this.camera.y + this.canvas.height / (2 * this.camera.zoom);
-        this.game.sendCommand({ type: 'ping', playerId: this.pid, x: wx / TILE_SIZE, y: wy / TILE_SIZE });
-        return true;
-      }
-      if (cx >= util.chatX && cx < util.chatX + util.utilW) {
-        const chatCoolingDown = Date.now() < this.quickChatCooldownUntil;
-        if (chatCoolingDown) {
-          if (this.queuedQuickChat) {
-            this.queuedQuickChat = null;
-            this.quickChatToast = { text: 'Canceled queued Defend', until: Date.now() + 900 };
-            return true;
-          }
-          this.queueQuickChatFallback('Defend');
-          return true;
-        }
-        this.quickChatRadialActive = true;
-        this.quickChatRadialCenter = this.getClampedRadialCenter(this.canvas.width / 2, this.canvas.height / 2);
-        this.pointerX = this.quickChatRadialCenter.x;
-        this.pointerY = this.quickChatRadialCenter.y;
-        return true;
-      }
-    }
+    // (PING/CHAT utility button hit tests removed)
 
     if (this.mobileHintVisible) {
       const hx = 10;
@@ -1048,17 +940,13 @@ export class InputHandler {
     this.trayTick++;
     this.processQueuedQuickChat();
     const ctx = renderer.ctx;
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.setTransform(window.devicePixelRatio || 1, 0, 0, window.devicePixelRatio || 1, 0, 0);
     this.drawBuildTray(ctx);
     this.drawHelpButton(ctx);
 
     if (this.showTutorial) {
       this.drawTutorial(ctx);
       return; // don't draw other overlays while tutorial is open
-    }
-
-    if (this.touchRadialArmed && !this.quickChatRadialActive && this.touchArmCenter) {
-      this.drawQuickChatArmCue(ctx);
     }
 
     if (this.quickChatRadialActive) {
@@ -1087,7 +975,7 @@ export class InputHandler {
         ctx.lineWidth = 1;
         ctx.stroke();
         ctx.restore();
-        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.setTransform(window.devicePixelRatio || 1, 0, 0, window.devicePixelRatio || 1, 0, 0);
       }
     }
 
@@ -1125,34 +1013,7 @@ export class InputHandler {
       ctx.fillRect(0, milY, W, milH);
     }
 
-    // Utility buttons above tray
-    const util = this.getUtilityLayout(milY);
-    const utilY = util.utilY;
-
-    // Ping button with play icon
-    this.ui.drawSmallBlueRoundButton(ctx, util.pingX, utilY, util.utilH);
-    ctx.fillStyle = '#ffe082';
-    ctx.font = 'bold 10px monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText('PING', util.pingX + util.utilW / 2, utilY + util.utilH + 10);
-
-    const chatCoolingDown = quickChatCdMs > 0;
-    const chatIsQueued = this.queuedQuickChat !== null;
-    // Chat button with music icon as placeholder
-    if (chatCoolingDown) {
-      this.ui.drawSmallRedRoundButton(ctx, util.chatX + (util.utilW - util.utilH) / 2, utilY, util.utilH);
-    } else {
-      this.ui.drawSmallBlueRoundButton(ctx, util.chatX + (util.utilW - util.utilH) / 2, utilY, util.utilH);
-    }
-    ctx.fillStyle = chatCoolingDown ? '#ffcc80' : '#90caf9';
-    ctx.font = 'bold 10px monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText(chatCoolingDown ? 'DEFEND' : 'CHAT', util.chatX + util.utilW / 2, utilY + util.utilH + 10);
-    if (chatIsQueued) {
-      ctx.fillStyle = '#ffcc80';
-      ctx.font = 'bold 9px monospace';
-      ctx.fillText('QUEUED', util.chatX + util.utilW / 2, utilY + util.utilH + 20);
-    }
+    // (PING/CHAT utility buttons removed — accessible via Q key / radial on desktop)
     // --- Helper: draw colorized cost parts with resource icons ---
     const costIconSize = 14;
     const drawCost = (parts: { val: number; type: 'g' | 'w' | 's' }[], cx: number, cy: number, affordable: boolean) => {
@@ -1459,7 +1320,7 @@ export class InputHandler {
     // Building popup (in-world)
     if (this.buildingPopup.isOpen()) {
       this.buildingPopup.draw(ctx, this.camera, this.game.state, this.ui,
-        W, this.canvas.height, player.gold, player.wood, player.stone, this.sprites);
+        W, this.canvas.clientHeight, player.gold, player.wood, player.stone, this.sprites);
     }
 
     ctx.textAlign = 'start';
@@ -1487,7 +1348,7 @@ export class InputHandler {
       ctx.stroke();
       ctx.setLineDash([]);
       ctx.restore();
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.setTransform(window.devicePixelRatio || 1, 0, 0, window.devicePixelRatio || 1, 0, 0);
 
       // Draw info panel at top of screen
       const player = this.game.state.players[u.playerId];
@@ -1521,7 +1382,7 @@ export class InputHandler {
         if (m > maxW) maxW = m;
       }
       const boxW = maxW + padX * 2;
-      const boxX = (this.canvas.width - boxW) / 2;
+      const boxX = (this.canvas.clientWidth - boxW) / 2;
       const boxY = 8;
 
       ctx.fillStyle = 'rgba(0, 0, 0, 0.92)';
@@ -1605,11 +1466,11 @@ export class InputHandler {
 
   private drawDevOverlay(ctx: CanvasRenderingContext2D): void {
     const state = this.game.state;
-    const W = this.canvas.width;
+    const W = this.canvas.clientWidth;
 
     // Semi-transparent background
     ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
-    ctx.fillRect(0, 0, W, this.canvas.height);
+    ctx.fillRect(0, 0, W, this.canvas.clientHeight);
 
     const lh = 16;
     const col1 = 20;
@@ -1635,7 +1496,7 @@ export class InputHandler {
     ctx.font = '12px monospace';
     ctx.fillText(`Time: ${mins}:${secs.toString().padStart(2, '0')}  Phase: ${state.matchPhase}  Winner: ${state.winner ?? 'none'}`, col1, y);
     y += lh;
-    ctx.fillText(`HQ HP: Bottom ${state.hqHp[0]} | Top ${state.hqHp[1]}`, col1, y);
+    ctx.fillText(`HQ HP: ${state.hqHp.map((hp, i) => `T${i}:${hp}`).join(' | ')}`, col1, y);
     y += lh + 4;
 
     // Per-player live stats table
@@ -1693,9 +1554,9 @@ export class InputHandler {
     const topCaster = topUnits.filter(u => u.category === 'caster').length;
     ctx.fillStyle = '#ccc';
     ctx.font = '11px monospace';
-    ctx.fillText(`Bottom: ${botUnits.length} total (${botMelee}m ${botRanged}r ${botCaster}c)  Harvesters: ${state.harvesters.filter(h => h.playerId < 2).length}`, col1, y);
+    ctx.fillText(`Bottom: ${botUnits.length} total (${botMelee}m ${botRanged}r ${botCaster}c)  Harvesters: ${state.harvesters.filter(h => h.team === Team.Bottom).length}`, col1, y);
     y += lh;
-    ctx.fillText(`Top:    ${topUnits.length} total (${topMelee}m ${topRanged}r ${topCaster}c)  Harvesters: ${state.harvesters.filter(h => h.playerId >= 2).length}`, col1, y);
+    ctx.fillText(`Top:    ${topUnits.length} total (${topMelee}m ${topRanged}r ${topCaster}c)  Harvesters: ${state.harvesters.filter(h => h.team === Team.Top).length}`, col1, y);
     y += lh + 8;
 
     // --- HISTORICAL BALANCE (from localStorage) ---
@@ -1875,7 +1736,7 @@ export class InputHandler {
 
     // Highlight hut grid for miner
     if (isHut) {
-      const origin = getHutGridOrigin(this.pid);
+      const origin = getHutGridOrigin(this.pid, this.game.state.mapDef);
       const myHuts = this.game.state.buildings.filter(b => b.playerId === this.pid && b.type === BuildingType.HarvesterHut);
       const occupiedSlots = new Set(myHuts.map(b => b.gridX));
       // Show next auto-placement slot with a bright highlight
@@ -1906,7 +1767,7 @@ export class InputHandler {
 
     // Highlight military grid slots (for non-tower, non-hut types)
     if (!isTower && !isHut) {
-      const origin = getBuildGridOrigin(this.pid);
+      const origin = getBuildGridOrigin(this.pid, this.game.state.mapDef);
       for (let gy = 0; gy < BUILD_GRID_ROWS; gy++) {
         for (let gx = 0; gx < BUILD_GRID_COLS; gx++) {
           const wx = (origin.x + gx) * TILE_SIZE;
@@ -1925,7 +1786,7 @@ export class InputHandler {
 
     // Highlight tower alley slots (for towers)
     if (isTower) {
-      const alley = getTeamAlleyOrigin(myTeam);
+      const alley = getTeamAlleyOrigin(myTeam, this.game.state.mapDef);
       for (let gy = 0; gy < SHARED_ALLEY_ROWS; gy++) {
         for (let gx = 0; gx < SHARED_ALLEY_COLS; gx++) {
           const wx = (alley.x + gx) * TILE_SIZE;
@@ -1933,7 +1794,7 @@ export class InputHandler {
           const occupied = this.game.state.buildings.some(
             b => {
               if (b.buildGrid !== 'alley' || b.gridX !== gx || b.gridY !== gy) return false;
-              const bTeam = b.playerId < 2 ? Team.Bottom : Team.Top;
+              const bTeam = this.game.state.players[b.playerId]?.team ?? Team.Bottom;
               return bTeam === myTeam;
             }
           );
@@ -1947,7 +1808,7 @@ export class InputHandler {
     }
 
     ctx.restore();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.setTransform(window.devicePixelRatio || 1, 0, 0, window.devicePixelRatio || 1, 0, 0);
   }
 
   private drawBuildTooltip(ctx: CanvasRenderingContext2D, _renderer: Renderer): void {
@@ -2004,7 +1865,7 @@ export class InputHandler {
       if (m > maxW) maxW = m;
     }
     const boxW = maxW + padX * 2;
-    const boxX = (this.canvas.width - boxW) / 2;
+    const boxX = (this.canvas.clientWidth - boxW) / 2;
     const boxY = milY - boxH - 8;
 
     // Background
@@ -2037,7 +1898,7 @@ export class InputHandler {
     if (!this.hoveredGridSlot) return;
     const slot = this.hoveredGridSlot;
 
-    const origin = slot.isAlley ? getTeamAlleyOrigin(this.myTeam) : getBuildGridOrigin(this.pid);
+    const origin = slot.isAlley ? getTeamAlleyOrigin(this.myTeam, this.game.state.mapDef) : getBuildGridOrigin(this.pid, this.game.state.mapDef);
     const worldX = (origin.x + slot.gx) * TILE_SIZE;
     const worldY = (origin.y + slot.gy) * TILE_SIZE;
 
@@ -2047,7 +1908,7 @@ export class InputHandler {
       b => {
         if (b.buildGrid !== grid || b.gridX !== slot.gx || b.gridY !== slot.gy) return false;
         if (!slot.isAlley) return b.playerId === this.pid;
-        const buildingTeam = b.playerId < 2 ? Team.Bottom : Team.Top;
+        const buildingTeam = this.game.state.players[b.playerId]?.team ?? Team.Bottom;
         return buildingTeam === myTeam;
       }
     );
@@ -2060,7 +1921,7 @@ export class InputHandler {
     ctx.lineWidth = 2;
     ctx.strokeRect(worldX, worldY, TILE_SIZE, TILE_SIZE);
 
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.setTransform(window.devicePixelRatio || 1, 0, 0, window.devicePixelRatio || 1, 0, 0);
   }
 
   private drawNukeOverlay(ctx: CanvasRenderingContext2D): void {
@@ -2068,36 +1929,57 @@ export class InputHandler {
     const team = this.game.state.players[this.pid]?.team ?? Team.Bottom;
 
     // Draw red blocked zone over enemy half (can't nuke there)
-    const forbiddenMinY = team === Team.Bottom ? 0 : ZONES.MID.end;
-    const forbiddenMaxY = team === Team.Bottom ? ZONES.MID.start : MAP_HEIGHT;
-    const screenX1 = (0 - cam.x) * cam.zoom;
-    const screenY1 = (forbiddenMinY * TILE_SIZE - cam.y) * cam.zoom;
-    const screenX2 = (MAP_WIDTH * TILE_SIZE - cam.x) * cam.zoom;
-    const screenY2 = (forbiddenMaxY * TILE_SIZE - cam.y) * cam.zoom;
-
+    const mapDef = this.game.state.mapDef;
+    let forbidScreenX1: number, forbidScreenY1: number, forbidScreenX2: number, forbidScreenY2: number;
+    if (mapDef.shapeAxis === 'y') {
+      // Portrait: forbidden zone is enemy's vertical half
+      const forbiddenMinY = team === Team.Bottom ? 0 : ZONES.MID.end;
+      const forbiddenMaxY = team === Team.Bottom ? ZONES.MID.start : mapDef.height;
+      forbidScreenX1 = (0 - cam.x) * cam.zoom;
+      forbidScreenY1 = (forbiddenMinY * TILE_SIZE - cam.y) * cam.zoom;
+      forbidScreenX2 = (mapDef.width * TILE_SIZE - cam.x) * cam.zoom;
+      forbidScreenY2 = (forbiddenMaxY * TILE_SIZE - cam.y) * cam.zoom;
+    } else {
+      // Landscape: forbidden zone is enemy's horizontal half
+      const midX = Math.floor(mapDef.width / 2);
+      const forbiddenMinX = team === Team.Bottom ? midX : 0;
+      const forbiddenMaxX = team === Team.Bottom ? mapDef.width : midX;
+      forbidScreenX1 = (forbiddenMinX * TILE_SIZE - cam.x) * cam.zoom;
+      forbidScreenY1 = (0 - cam.y) * cam.zoom;
+      forbidScreenX2 = (forbiddenMaxX * TILE_SIZE - cam.x) * cam.zoom;
+      forbidScreenY2 = (mapDef.height * TILE_SIZE - cam.y) * cam.zoom;
+    }
     ctx.fillStyle = 'rgba(255, 0, 0, 0.15)';
-    ctx.fillRect(screenX1, screenY1, screenX2 - screenX1, screenY2 - screenY1);
+    ctx.fillRect(forbidScreenX1, forbidScreenY1, forbidScreenX2 - forbidScreenX1, forbidScreenY2 - forbidScreenY1);
 
     // Striped forbidden border
     ctx.strokeStyle = 'rgba(255, 50, 0, 0.6)';
     ctx.lineWidth = 3;
     ctx.setLineDash([10, 6]);
-    const borderY = team === Team.Bottom ? screenY1 + (screenY2 - screenY1) : screenY1;
-    ctx.beginPath();
-    ctx.moveTo(screenX1, borderY);
-    ctx.lineTo(screenX2, borderY);
-    ctx.stroke();
+    if (mapDef.shapeAxis === 'y') {
+      const borderY = team === Team.Bottom ? forbidScreenY1 + (forbidScreenY2 - forbidScreenY1) : forbidScreenY1;
+      ctx.beginPath();
+      ctx.moveTo(forbidScreenX1, borderY);
+      ctx.lineTo(forbidScreenX2, borderY);
+      ctx.stroke();
+    } else {
+      const borderX = team === Team.Bottom ? forbidScreenX1 : forbidScreenX2;
+      ctx.beginPath();
+      ctx.moveTo(borderX, forbidScreenY1);
+      ctx.lineTo(borderX, forbidScreenY2);
+      ctx.stroke();
+    }
     ctx.setLineDash([]);
 
     // Light valid zone tint
     ctx.fillStyle = 'rgba(255, 100, 0, 0.04)';
-    ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    ctx.fillRect(0, 0, this.canvas.clientWidth, this.canvas.clientHeight);
 
     // Instruction text
     ctx.fillStyle = '#ff5722';
     ctx.font = 'bold 16px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText('CLICK TO FIRE NUKE (own half only)  [ESC to cancel]', this.canvas.width / 2, 60);
+    ctx.fillText('CLICK TO FIRE NUKE (own half only)  [ESC to cancel]', this.canvas.clientWidth / 2, 60);
     ctx.textAlign = 'start';
   }
 
@@ -2108,7 +1990,7 @@ export class InputHandler {
     const selected = this.getQuickChatChoiceFromPointer();
 
     ctx.fillStyle = 'rgba(0,0,0,0.2)';
-    ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    ctx.fillRect(0, 0, this.canvas.clientWidth, this.canvas.clientHeight);
     ctx.fillStyle = this.radialAccessibility ? 'rgba(0,0,0,0.95)' : 'rgba(10,10,10,0.9)';
     const radius = this.radialSize + (this.radialAccessibility ? 16 : 0);
     const optionOffset = radius + (this.radialAccessibility ? 34 : 22);
@@ -2148,25 +2030,6 @@ export class InputHandler {
     ctx.font = this.radialAccessibility ? 'bold 12px monospace' : '11px monospace';
     ctx.fillText('Hold Q, aim, release (tap Q = Defend)', cx, cy + 4);
     ctx.textAlign = 'start';
-  }
-
-  private drawQuickChatArmCue(ctx: CanvasRenderingContext2D): void {
-    if (!this.touchArmCenter) return;
-    const elapsed = Date.now() - this.touchArmStartAt;
-    const t = Math.max(0, Math.min(1, elapsed / this.radialArmMs));
-    const cx = this.touchArmCenter.x;
-    const cy = this.touchArmCenter.y;
-    const cueR = this.radialAccessibility ? 24 : 20;
-    ctx.beginPath();
-    ctx.arc(cx, cy, cueR, 0, Math.PI * 2);
-    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.arc(cx, cy, cueR, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * t);
-    ctx.strokeStyle = 'rgba(144,202,249,0.9)';
-    ctx.lineWidth = 3;
-    ctx.stroke();
   }
 
   private quickChatFeedback(success: boolean): void {

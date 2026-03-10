@@ -15,6 +15,7 @@
     "src/simulation/**/*.ts",
     "src/tests/simSmoke.ts",
     "src/tests/balanceSim.ts",
-    "src/tests/wideVsTall.ts"
+    "src/tests/wideVsTall.ts",
+    "src/tests/difficultyTest.ts"
   ]
 }

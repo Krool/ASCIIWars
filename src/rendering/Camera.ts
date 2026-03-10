@@ -5,16 +5,19 @@ export class Camera {
   y = 0;
   zoom = 1;
   private maxZoom = 3;
+  // Configurable world size (set via setWorldSize for non-default maps)
+  worldTilesW = MAP_WIDTH;
+  worldTilesH = MAP_HEIGHT;
   // Smooth pan target
   private panTargetX: number | null = null;
   private panTargetY: number | null = null;
   private panTargetZoom: number | null = null;
 
   private get minZoom(): number {
-    const worldW = MAP_WIDTH * TILE_SIZE;
-    const worldH = MAP_HEIGHT * TILE_SIZE;
+    const worldW = this.worldTilesW * TILE_SIZE;
+    const worldH = this.worldTilesH * TILE_SIZE;
     // 5% padding on each side → view = world * 1.10
-    return Math.min(this.canvas.width / (worldW * 1.10), this.canvas.height / (worldH * 1.10));
+    return Math.min(this.canvas.clientWidth / (worldW * 1.10), this.canvas.clientHeight / (worldH * 1.10));
   }
 
   private keys = new Set<string>();
@@ -35,10 +38,10 @@ export class Camera {
     this.setupInputs();
     // Start centered on the map, zoom clamped so full board is always reachable
     this.zoom = Math.max(this.minZoom, this.zoom);
-    const worldW = MAP_WIDTH * TILE_SIZE;
-    const worldH = MAP_HEIGHT * TILE_SIZE;
-    this.x = (worldW - canvas.width / this.zoom) / 2;
-    this.y = (worldH - canvas.height / this.zoom) / 2;
+    const worldW = this.worldTilesW * TILE_SIZE;
+    const worldH = this.worldTilesH * TILE_SIZE;
+    this.x = (worldW - (canvas.clientWidth || canvas.width) / this.zoom) / 2;
+    this.y = (worldH - (canvas.clientHeight || canvas.height) / this.zoom) / 2;
   }
 
   destroy(): void {
@@ -125,10 +128,10 @@ export class Camera {
   }
 
   private clamp(): void {
-    const worldW = MAP_WIDTH * TILE_SIZE;
-    const worldH = MAP_HEIGHT * TILE_SIZE;
-    const viewW = this.canvas.width / this.zoom;
-    const viewH = this.canvas.height / this.zoom;
+    const worldW = this.worldTilesW * TILE_SIZE;
+    const worldH = this.worldTilesH * TILE_SIZE;
+    const viewW = this.canvas.clientWidth / this.zoom;
+    const viewH = this.canvas.clientHeight / this.zoom;
     const margin = 100;
     this.x = Math.max(-margin, Math.min(worldW - viewW + margin, this.x));
     this.y = Math.max(-margin, Math.min(worldH - viewH + margin, this.y));
@@ -136,8 +139,8 @@ export class Camera {
 
   /** Smoothly pan camera to center on a world-pixel position at a given zoom. */
   panTo(worldX: number, worldY: number, targetZoom?: number): void {
-    this.panTargetX = worldX - this.canvas.width / (2 * (targetZoom ?? this.zoom));
-    this.panTargetY = worldY - this.canvas.height / (2 * (targetZoom ?? this.zoom));
+    this.panTargetX = worldX - this.canvas.clientWidth / (2 * (targetZoom ?? this.zoom));
+    this.panTargetY = worldY - this.canvas.clientHeight / (2 * (targetZoom ?? this.zoom));
     this.panTargetZoom = targetZoom ?? null;
   }
 
@@ -198,6 +201,8 @@ export class Camera {
   }
 
   applyTransform(ctx: CanvasRenderingContext2D): void {
-    ctx.setTransform(this.zoom, 0, 0, this.zoom, -this.x * this.zoom, -this.y * this.zoom);
+    const dpr = window.devicePixelRatio || 1;
+    const z = this.zoom * dpr;
+    ctx.setTransform(z, 0, 0, z, -this.x * z, -this.y * z);
   }
 }

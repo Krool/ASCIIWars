@@ -1,5 +1,6 @@
-import { GameState, GameCommand, Race, Team, HQ_HP, createSeededRng } from '../simulation/types';
+import { GameState, GameCommand, Race, Team, MapDef, HQ_HP, createSeededRng } from '../simulation/types';
 import { createInitialState, simulateTick, computeStateHash } from '../simulation/GameState';
+import { DUEL_MAP } from '../simulation/maps';
 import { GameLoop } from './GameLoop';
 import { Renderer } from '../rendering/Renderer';
 import { InputHandler } from '../ui/InputHandler';
@@ -9,12 +10,14 @@ import { UIAssets } from '../rendering/UIAssets';
 import { CommandSync, TICKS_PER_TURN } from '../network/CommandSync';
 
 export interface GamePartyOptions {
-  player1Race: Race;
-  player1Human: boolean;
+  /** All human players in slot order: { slotIndex, race }.
+   *  Slots not listed here become bots. */
+  humanPlayers: { slot: number; race: Race }[];
+  localPlayerId: number;     // this client's slot index
   seed: number;
-  partyCode?: string;       // set for networked multiplayer (enables CommandSync)
-  localPlayerId?: number;   // 0 = host, 1 = guest
+  partyCode?: string;        // set for networked multiplayer (enables CommandSync)
   botDifficulty?: BotDifficultyLevel;
+  mapDef?: MapDef;           // map to play on (default: DUEL_MAP)
 }
 
 export class Game {
@@ -50,39 +53,47 @@ export class Game {
   /** Current round-trip latency in ms (0 for solo). */
   get networkLatencyMs(): number { return this.commandSync?.latencyMs ?? 0; }
 
-  constructor(canvas: HTMLCanvasElement, playerRace: Race = Race.Crown, ui?: UIAssets, partyOpts?: GamePartyOptions, soloDifficulty?: BotDifficultyLevel) {
+  constructor(canvas: HTMLCanvasElement, playerRace: Race = Race.Crown, ui?: UIAssets, partyOpts?: GamePartyOptions, soloDifficulty?: BotDifficultyLevel, soloMapDef?: MapDef) {
+    const mapDef = partyOpts?.mapDef ?? soloMapDef ?? DUEL_MAP;
     // Pick bot races: fill remaining slots from races other than player's
     const allRaces = [Race.Crown, Race.Horde, Race.Goblins, Race.Oozlings, Race.Demon, Race.Deep, Race.Wild, Race.Geists, Race.Tenders];
 
     if (partyOpts) {
-      // 2-player party mode: P0 + P1 are humans, P2 + P3 are bots
-      // Use shared seed for deterministic bot race selection
+      // Party mode: build player list from human slots + bot fillers
       const shuffleRng = createSeededRng(partyOpts.seed);
-      const usedRaces = new Set([playerRace, partyOpts.player1Race]);
+      const humanSlotMap = new Map(partyOpts.humanPlayers.map(h => [h.slot, h.race]));
+      const usedRaces = new Set(partyOpts.humanPlayers.map(h => h.race));
       const otherRaces = allRaces.filter(r => !usedRaces.has(r));
       for (let i = otherRaces.length - 1; i > 0; i--) {
         const j = Math.floor(shuffleRng() * (i + 1));
         [otherRaces[i], otherRaces[j]] = [otherRaces[j], otherRaces[i]];
       }
-      this.state = createInitialState([
-        { race: playerRace, isBot: false },                          // P0 - human (host)
-        { race: partyOpts.player1Race, isBot: !partyOpts.player1Human }, // P1 - human (guest) or bot
-        { race: otherRaces[0], isBot: true },                        // P2 - bot enemy
-        { race: otherRaces[1], isBot: true },                        // P3 - bot enemy
-      ], partyOpts.seed);
+      let botIdx = 0;
+      const players: { race: Race; isBot: boolean }[] = [];
+      for (let i = 0; i < mapDef.maxPlayers; i++) {
+        const humanRace = humanSlotMap.get(i);
+        if (humanRace !== undefined) {
+          players.push({ race: humanRace, isBot: false });
+        } else {
+          players.push({ race: otherRaces[botIdx++ % otherRaces.length], isBot: true });
+        }
+      }
+      this.state = createInitialState(players, partyOpts.seed, mapDef);
     } else {
-      // Solo mode: P0 human, P1/P2/P3 bots
+      // Solo mode: P0 human, rest are bots
       const otherRaces = allRaces.filter(r => r !== playerRace);
       for (let i = otherRaces.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [otherRaces[i], otherRaces[j]] = [otherRaces[j], otherRaces[i]];
       }
-      this.state = createInitialState([
-        { race: playerRace, isBot: false },          // P0 - human
-        { race: otherRaces[0], isBot: true },        // P1 - bot teammate
-        { race: otherRaces[1], isBot: true },        // P2 - bot enemy
-        { race: otherRaces[2], isBot: true },        // P3 - bot enemy
-      ]);
+      const players: { race: Race; isBot: boolean }[] = [
+        { race: playerRace, isBot: false },  // P0 - human
+      ];
+      // Fill remaining slots with bots
+      for (let i = 1; i < mapDef.maxPlayers; i++) {
+        players.push({ race: otherRaces[i - 1], isBot: true });
+      }
+      this.state = createInitialState(players, undefined, mapDef);
     }
 
     // Set up bot difficulty
@@ -91,8 +102,9 @@ export class Game {
     // Set up multiplayer command sync if party code provided
     if (partyOpts?.partyCode != null) {
       this.isMultiplayer = true;
-      this.localPlayerId = partyOpts.localPlayerId ?? 0;
-      this.commandSync = new CommandSync(partyOpts.partyCode, this.localPlayerId);
+      this.localPlayerId = partyOpts.localPlayerId;
+      const humanSlotIds = partyOpts.humanPlayers.map(h => h.slot);
+      this.commandSync = new CommandSync(partyOpts.partyCode, this.localPlayerId, humanSlotIds);
       this.commandSync.onDesync = (turn, local, remote) => {
         console.error(`[DESYNC] turn ${turn}: local=${local.toString(16)} remote=${remote.toString(16)}`);
         this.desyncDetected = true;
@@ -106,6 +118,9 @@ export class Game {
 
     this.renderer = new Renderer(canvas, ui);
     this.renderer.localPlayerId = this.localPlayerId;
+    // Set camera world size for non-default maps
+    this.renderer.camera.worldTilesW = mapDef.width;
+    this.renderer.camera.worldTilesH = mapDef.height;
     this.input = new InputHandler(this, canvas, this.renderer.camera, ui, this.renderer.sprites);
     this.sounds = new SoundManager();
 
@@ -114,7 +129,11 @@ export class Game {
       () => this.render(),
     );
 
-    this.sounds.startMusic(playerRace);
+    // Use local player's race for music theme
+    const musicRace = partyOpts
+      ? (partyOpts.humanPlayers.find(h => h.slot === this.localPlayerId)?.race ?? playerRace)
+      : playerRace;
+    this.sounds.startMusic(musicRace);
   }
 
   /** Which player slot the local user controls (0 = host/solo, 1 = guest). */

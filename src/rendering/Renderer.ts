@@ -3,15 +3,14 @@ import { SpriteLoader, drawSpriteFrame, drawGridFrame, type SpriteDef, type Grid
 import { UIAssets } from './UIAssets';
 import {
   GameState, Team, MAP_WIDTH, MAP_HEIGHT, TILE_SIZE,
-  DIAMOND_CENTER_X, DIAMOND_CENTER_Y,
-  WOOD_NODE_X, STONE_NODE_X,
   ZONES, BUILD_GRID_COLS, BUILD_GRID_ROWS, HUT_GRID_COLS, SHARED_ALLEY_COLS, SHARED_ALLEY_ROWS,
   HQ_WIDTH, HQ_HEIGHT, HQ_HP,
-  getMarginAtRow,
-  BuildingType, Lane, LANE_PATHS, Vec2,
-  StatusType, Race,
+  BuildingType, Lane, Vec2,
+  StatusType, Race, ResourceType,
+  type MapDef,
   type BuildingState, type UnitState, type HarvesterState, type ProjectileState,
 } from '../simulation/types';
+import { DUEL_MAP } from '../simulation/maps';
 import { getHQPosition, getBuildGridOrigin, getHutGridOrigin, getTeamAlleyOrigin, getUnitUpgradeMultipliers } from '../simulation/GameState';
 import { RACE_COLORS, TOWER_STATS, PLAYER_COLORS } from '../simulation/data';
 import {
@@ -89,7 +88,11 @@ export class Renderer {
   // Track previous nuke effect count to detect new nukes
   private lastNukeCount = 0;
   // Track previous HQ HP values to detect destruction
-  private lastHqHp: [number, number] = [-1, -1];
+  private lastHqHp: number[] = [-1, -1];
+  // Map dimensions & definition — set from state.mapDef on first render, used throughout rendering
+  private mapW = MAP_WIDTH;
+  private mapH = MAP_HEIGHT;
+  private mapDef: MapDef = DUEL_MAP;
 
   constructor(canvas: HTMLCanvasElement, ui?: UIAssets) {
     this.canvas = canvas;
@@ -102,8 +105,11 @@ export class Renderer {
   }
 
   private resize(): void {
-    this.canvas.width = window.innerWidth;
-    this.canvas.height = window.innerHeight;
+    const dpr = window.devicePixelRatio || 1;
+    this.canvas.style.width = window.innerWidth + 'px';
+    this.canvas.style.height = window.innerHeight + 'px';
+    this.canvas.width = Math.round(window.innerWidth * dpr);
+    this.canvas.height = Math.round(window.innerHeight * dpr);
   }
 
   /** Update facing direction for an entity based on movement. Returns true if facing left. */
@@ -120,6 +126,13 @@ export class Renderer {
   }
 
   render(state: GameState, networkLatencyMs?: number, desyncDetected?: boolean, peerDisconnected?: boolean, waitingForAllyMs?: number): void {
+    // Update map dimensions from state (supports different map sizes)
+    this.mapDef = state.mapDef;
+    this.mapW = state.mapDef.width;
+    this.mapH = state.mapDef.height;
+    this.weather.mapW = this.mapW;
+    this.weather.mapH = this.mapH;
+
     const now = Date.now();
     const dt = Math.min((now - this.lastFrameTime) / 1000, 0.1);
     this.lastFrameTime = now;
@@ -152,14 +165,14 @@ export class Renderer {
 
     // Screen shake on HQ destroyed
     if (this.lastHqHp[0] >= 0) {
-      for (let t = 0; t < 2; t++) {
-        if (this.lastHqHp[t] > 0 && state.hqHp[t] <= 0) {
+      for (let t = 0; t < state.hqHp.length; t++) {
+        if ((this.lastHqHp[t] ?? 0) > 0 && state.hqHp[t] <= 0) {
           this.screenShake.trigger(12, 1.0);
           triggerHaptic(300, 1.0);
         }
       }
     }
-    this.lastHqHp = [state.hqHp[0], state.hqHp[1]];
+    this.lastHqHp = [...state.hqHp];
 
     // Gather combat zones for ambient particles
     const combatZones: { x: number; y: number }[] = [];
@@ -184,9 +197,10 @@ export class Renderer {
     }
 
     const ctx = this.ctx;
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    const dpr = window.devicePixelRatio || 1;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.fillStyle = '#4a8a7b';
-    ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    ctx.fillRect(0, 0, this.canvas.clientWidth, this.canvas.clientHeight);
 
     // Apply camera + screen shake
     this.camera.applyTransform(ctx);
@@ -197,7 +211,7 @@ export class Renderer {
     this.drawZones(ctx, state.tick);
     this.drawLanePaths(ctx);
     this.drawDiamondCells(ctx, state);
-    this.drawResourceNodes(ctx);
+    this.drawResourceNodes(ctx, state);
     this.drawBuildGrids(ctx, state);
     this.drawHutZones(ctx, state);
     this.drawTowerAlleys(ctx, state);
@@ -222,14 +236,14 @@ export class Renderer {
       ctx.fillStyle = this.dayNight.tint;
       ctx.fillRect(
         this.camera.x - 100, this.camera.y - 100,
-        this.canvas.width / this.camera.zoom + 200,
-        this.canvas.height / this.camera.zoom + 200
+        this.canvas.clientWidth / this.camera.zoom + 200,
+        this.canvas.clientHeight / this.camera.zoom + 200
       );
     }
 
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     // Weather screen overlay
-    this.weather.drawOverlay(ctx, this.canvas.width, this.canvas.height);
+    this.weather.drawOverlay(ctx, this.canvas.clientWidth, this.canvas.clientHeight);
     this.drawHUD(ctx, state, networkLatencyMs, desyncDetected, peerDisconnected, waitingForAllyMs);
     this.drawQuickChats(ctx, state);
     this.drawMinimap(ctx, state);
@@ -243,17 +257,19 @@ export class Renderer {
 
     const [tilemap] = tilemapData;
 
-    // Helper: is tile at (tx,ty) land (within the peanut)?
+    const mapDef = this.mapDef;
+    const mW = this.mapW;
+    const mH = this.mapH;
+
+    // Helper: is tile at (tx,ty) land (within the map shape)?
     const isLand = (tx: number, ty: number): boolean => {
-      if (ty < 0 || ty >= MAP_HEIGHT || tx < 0 || tx >= MAP_WIDTH) return false;
-      const m = getMarginAtRow(ty);
-      return tx >= Math.ceil(m) && tx < Math.floor(MAP_WIDTH - m);
+      return mapDef.isPlayable(tx, ty);
     };
 
     // ---- Build static water cache (water bg + rocks + clouds) ----
     const wc = document.createElement('canvas');
-    wc.width = MAP_WIDTH * T;
-    wc.height = MAP_HEIGHT * T;
+    wc.width = mW * T;
+    wc.height = mH * T;
     const wctx = wc.getContext('2d')!;
 
     const waterBgData = this.sprites.getTerrainSprite('waterBg');
@@ -274,17 +290,35 @@ export class Renderer {
     const waterRock2Data = this.sprites.getTerrainSprite('waterRock2');
     if (waterRock1Data || waterRock2Data) {
       for (let i = 0; i < 20; i++) {
-        const y = Math.floor(rand() * MAP_HEIGHT);
-        const m = getMarginAtRow(y);
+        // For landscape maps, scatter rocks in the margin areas
+        const axisPos = mapDef.shapeAxis === 'x'
+          ? Math.floor(rand() * mW)  // iterate columns for landscape
+          : Math.floor(rand() * mH); // iterate rows for portrait
+        const range = mapDef.getPlayableRange(axisPos);
+        const marginSize = range.min; // margin at start
+        const endMargin = (mapDef.shapeAxis === 'x' ? mH : mW) - range.max;
         const side = rand() < 0.5 ? 'left' : 'right';
-        let x: number;
-        if (side === 'left') {
-          if (m < 2) { rand(); continue; }
-          x = Math.floor(rand() * (Math.ceil(m) - 1));
+        let x: number, y: number;
+        if (mapDef.shapeAxis === 'x') {
+          // Landscape: margins are top/bottom (y-axis), axisPos is x
+          x = axisPos;
+          if (side === 'left') {
+            if (marginSize < 2) { rand(); continue; }
+            y = Math.floor(rand() * marginSize);
+          } else {
+            if (endMargin < 2) { rand(); continue; }
+            y = range.max + Math.floor(rand() * endMargin);
+          }
         } else {
-          const right = Math.floor(MAP_WIDTH - m);
-          if (right >= MAP_WIDTH - 1) { rand(); continue; }
-          x = right + 1 + Math.floor(rand() * (MAP_WIDTH - right - 1));
+          // Portrait: margins are left/right (x-axis), axisPos is y
+          y = axisPos;
+          if (side === 'left') {
+            if (marginSize < 2) { rand(); continue; }
+            x = Math.floor(rand() * marginSize);
+          } else {
+            if (endMargin < 2) { rand(); continue; }
+            x = range.max + Math.floor(rand() * endMargin);
+          }
         }
         const rockData = (i % 2 === 0 && waterRock1Data) ? waterRock1Data : (waterRock2Data ?? waterRock1Data);
         if (!rockData) continue;
@@ -302,17 +336,32 @@ export class Renderer {
     const clouds = [cloud1Data, cloud2Data, cloud3Data].filter(Boolean) as [HTMLImageElement, SpriteDef][];
     if (clouds.length > 0) {
       for (let i = 0; i < 12; i++) {
-        const y = Math.floor(rand() * MAP_HEIGHT);
-        const m = getMarginAtRow(y);
+        const axisPos2 = mapDef.shapeAxis === 'x'
+          ? Math.floor(rand() * mW)
+          : Math.floor(rand() * mH);
+        const range2 = mapDef.getPlayableRange(axisPos2);
+        const cMargin = range2.min;
+        const cEndMargin = (mapDef.shapeAxis === 'x' ? mH : mW) - range2.max;
         const side = rand() < 0.5 ? 'left' : 'right';
-        let x: number;
-        if (side === 'left') {
-          if (m < 3) { rand(); continue; }
-          x = Math.floor(rand() * Math.ceil(m));
+        let x: number, y: number;
+        if (mapDef.shapeAxis === 'x') {
+          x = axisPos2;
+          if (side === 'left') {
+            if (cMargin < 3) { rand(); continue; }
+            y = Math.floor(rand() * cMargin);
+          } else {
+            if (cEndMargin < 2) { rand(); continue; }
+            y = range2.max + Math.floor(rand() * cEndMargin);
+          }
         } else {
-          const right = Math.floor(MAP_WIDTH - m);
-          if (right >= MAP_WIDTH - 2) { rand(); continue; }
-          x = right + Math.floor(rand() * (MAP_WIDTH - right));
+          y = axisPos2;
+          if (side === 'left') {
+            if (cMargin < 3) { rand(); continue; }
+            x = Math.floor(rand() * cMargin);
+          } else {
+            if (cEndMargin < 2) { rand(); continue; }
+            x = range2.max + Math.floor(rand() * cEndMargin);
+          }
         }
         const [cImg, cDef] = clouds[Math.floor(rand() * clouds.length)];
         const cw = T * (4 + rand() * 3);
@@ -326,8 +375,8 @@ export class Renderer {
 
     // ---- Build land terrain cache (cliff faces + grass + decorations) ----
     const tc = document.createElement('canvas');
-    tc.width = MAP_WIDTH * T;
-    tc.height = MAP_HEIGHT * T;
+    tc.width = mW * T;
+    tc.height = mH * T;
     const tctx = tc.getContext('2d')!;
 
     // Tilemap source tile size
@@ -335,8 +384,8 @@ export class Renderer {
 
     // Pre-compute and store water edge tiles for per-frame foam animation
     this.waterEdges = [];
-    for (let y = 0; y < MAP_HEIGHT; y++) {
-      for (let x = 0; x < MAP_WIDTH; x++) {
+    for (let y = 0; y < mH; y++) {
+      for (let x = 0; x < mW; x++) {
         if (isLand(x, y)) continue;
         const n = isLand(x, y - 1) ? 1 : 0;
         const s = isLand(x, y + 1) ? 2 : 0;
@@ -366,8 +415,8 @@ export class Renderer {
       }
     }
     // Second row of cliff (extends depth)
-    for (let y = 0; y < MAP_HEIGHT; y++) {
-      for (let x = 0; x < MAP_WIDTH; x++) {
+    for (let y = 0; y < mH; y++) {
+      for (let x = 0; x < mW; x++) {
         if (isLand(x, y)) continue;
         if (isLand(x, y - 1)) continue; // skip first row (already drawn above)
         if (!isLand(x, y - 2)) continue; // need land 2 rows up
@@ -387,8 +436,8 @@ export class Renderer {
 
     // 2. Autotiled grass with proper edge tiles (9-patch from tilemap)
     const OV = 3; // pixel overhang for edge tiles
-    for (let y = 0; y < MAP_HEIGHT; y++) {
-      for (let x = 0; x < MAP_WIDTH; x++) {
+    for (let y = 0; y < mH; y++) {
+      for (let x = 0; x < mW; x++) {
         if (!isLand(x, y)) continue;
 
         const n = isLand(x, y - 1);
@@ -418,30 +467,44 @@ export class Renderer {
       }
     }
 
-    // 3. Subtle zone tinting over grass
-    const drawZoneTint = (startRow: number, endRow: number, color: string) => {
-      tctx.fillStyle = color;
-      for (let y = startRow; y < endRow; y++) {
-        const m = getMarginAtRow(y);
-        const left = Math.ceil(m);
-        const right = Math.floor(MAP_WIDTH - m);
-        tctx.fillRect(left * T, y * T, (right - left) * T, T);
+    // 3. Subtle zone tinting over grass (team base areas)
+    if (mapDef.shapeAxis === 'y') {
+      // Portrait map: horizontal bands for top/bottom bases
+      const drawZoneTint = (startRow: number, endRow: number, color: string) => {
+        tctx.fillStyle = color;
+        for (let y = startRow; y < endRow; y++) {
+          const range = mapDef.getPlayableRange(y);
+          tctx.fillRect(range.min * T, y * T, (range.max - range.min) * T, T);
+        }
+      };
+      drawZoneTint(ZONES.TOP_BASE.start, ZONES.TOP_BASE.end, 'rgba(200, 0, 0, 0.06)');
+      drawZoneTint(ZONES.BOTTOM_BASE.start, ZONES.BOTTOM_BASE.end, 'rgba(0, 80, 200, 0.06)');
+    } else {
+      // Landscape map: vertical bands for left/right bases
+      const baseDepth = 18; // matches SK_BASE_DEPTH
+      const teamColors = ['rgba(0, 80, 200, 0.06)', 'rgba(200, 0, 0, 0.06)'];
+      const xRanges = [[0, baseDepth], [mW - baseDepth, mW]];
+      for (let t = 0; t < 2; t++) {
+        tctx.fillStyle = teamColors[t];
+        for (let x = xRanges[t][0]; x < xRanges[t][1]; x++) {
+          const range = mapDef.getPlayableRange(x);
+          tctx.fillRect(x * T, range.min * T, T, (range.max - range.min) * T);
+        }
       }
-    };
-    drawZoneTint(ZONES.TOP_BASE.start, ZONES.TOP_BASE.end, 'rgba(200, 0, 0, 0.06)');
-    drawZoneTint(ZONES.BOTTOM_BASE.start, ZONES.BOTTOM_BASE.end, 'rgba(0, 80, 200, 0.06)');
+    }
 
     // 4. Scatter bush decorations on grass
     const bush1Data = this.sprites.getTerrainSprite('bush1');
     const bush2Data = this.sprites.getTerrainSprite('bush2');
     if (bush1Data || bush2Data) {
       for (let i = 0; i < 40; i++) {
-        const y = Math.floor(rand() * MAP_HEIGHT);
-        const m = getMarginAtRow(y);
-        const left = Math.ceil(m) + 2;
-        const right = Math.floor(MAP_WIDTH - m) - 2;
-        if (left >= right) continue;
-        const x = left + Math.floor(rand() * (right - left));
+        // Place bushes randomly within playable area
+        const bx = Math.floor(rand() * mW);
+        const by = Math.floor(rand() * mH);
+        if (!mapDef.isPlayable(bx, by)) continue;
+        // Ensure we're not too close to the edge
+        if (!mapDef.isPlayable(bx - 2, by) || !mapDef.isPlayable(bx + 2, by)) continue;
+        const x = bx, y = by;
         const bushData = (i % 2 === 0 && bush1Data) ? bush1Data : (bush2Data ?? bush1Data);
         if (!bushData) continue;
         const [bImg, bDef] = bushData;
@@ -464,20 +527,20 @@ export class Renderer {
     const invZoom = 1 / cam.zoom;
     const sx = Math.max(0, Math.floor(cam.x / T) - 1);
     const sy = Math.max(0, Math.floor(cam.y / T) - 1);
-    const ex = Math.min(MAP_WIDTH, Math.ceil((cam.x + ctx.canvas.width * invZoom) / T) + 1);
-    const ey = Math.min(MAP_HEIGHT, Math.ceil((cam.y + ctx.canvas.height * invZoom) / T) + 1);
+    const ex = Math.min(this.mapW, Math.ceil((cam.x + ctx.canvas.clientWidth * invZoom) / T) + 1);
+    const ey = Math.min(this.mapH, Math.ceil((cam.y + ctx.canvas.clientHeight * invZoom) / T) + 1);
 
     // 1. Broad water wave bands (covers all visible water, cheap)
     const waveCount = 6;
     for (let i = 0; i < waveCount; i++) {
       // Each wave band sweeps across the map diagonally
       const phase = tick * 0.03 + i * (Math.PI * 2 / waveCount);
-      const bandY = ((Math.sin(phase) * 0.5 + 0.5) * MAP_HEIGHT * T);
+      const bandY = ((Math.sin(phase) * 0.5 + 0.5) * this.mapH * T);
       const bandH = T * 3;
       const alpha = 0.025 + Math.sin(tick * 0.05 + i) * 0.015;
       if (alpha <= 0) continue;
       ctx.fillStyle = `rgba(180,240,255,${alpha.toFixed(3)})`;
-      ctx.fillRect(0, bandY - bandH / 2, MAP_WIDTH * T, bandH);
+      ctx.fillRect(0, bandY - bandH / 2, this.mapW * T, bandH);
     }
 
     // 2. Per-tile shimmer on water edge tiles
@@ -562,13 +625,14 @@ export class Renderer {
     } else {
       // Fallback: simple water + grass colors
       ctx.fillStyle = '#5b9a8b';
-      ctx.fillRect(0, 0, MAP_WIDTH * T, MAP_HEIGHT * T);
+      ctx.fillRect(0, 0, this.mapW * T, this.mapH * T);
       ctx.fillStyle = '#3a6b3a';
-      for (let y = 0; y < MAP_HEIGHT; y++) {
-        const m = getMarginAtRow(y);
-        const left = Math.ceil(m);
-        const right = Math.floor(MAP_WIDTH - m);
-        ctx.fillRect(left * T, y * T, (right - left) * T, T);
+      for (let y = 0; y < this.mapH; y++) {
+        for (let x = 0; x < this.mapW; x++) {
+          if (this.mapDef.isPlayable(x, y)) {
+            ctx.fillRect(x * T, y * T, T, T);
+          }
+        }
       }
     }
   }
@@ -610,16 +674,29 @@ export class Renderer {
       ctx.globalAlpha = 1;
     };
 
-    drawPath(LANE_PATHS.bottom.left, LANE_LEFT_COLOR);
-    drawPath(LANE_PATHS.bottom.right, LANE_RIGHT_COLOR);
+    // Draw lane paths for local player's team (team 0 by default for solo)
+    const teamPaths = this.mapDef.lanePaths[0]; // team 0's lanes (both teams share same visual paths)
+    drawPath(teamPaths.left, LANE_LEFT_COLOR);
+    drawPath(teamPaths.right, LANE_RIGHT_COLOR);
 
+    // Lane labels near diamond center
+    const dc = this.mapDef.diamondCenter;
     ctx.font = 'bold 14px monospace';
     ctx.globalAlpha = 0.7;
     ctx.textAlign = 'center';
-    ctx.fillStyle = LANE_LEFT_COLOR;
-    ctx.fillText('L', 20 * T, DIAMOND_CENTER_Y * T);
-    ctx.fillStyle = LANE_RIGHT_COLOR;
-    ctx.fillText('R', 60 * T, DIAMOND_CENTER_Y * T);
+    if (this.mapDef.shapeAxis === 'y') {
+      // Portrait: L on left, R on right (relative to diamond center)
+      ctx.fillStyle = LANE_LEFT_COLOR;
+      ctx.fillText('L', (dc.x - 20) * T, dc.y * T);
+      ctx.fillStyle = LANE_RIGHT_COLOR;
+      ctx.fillText('R', (dc.x + 20) * T, dc.y * T);
+    } else {
+      // Landscape: L on top, R on bottom
+      ctx.fillStyle = LANE_LEFT_COLOR;
+      ctx.fillText('L', dc.x * T, (dc.y - 14) * T);
+      ctx.fillStyle = LANE_RIGHT_COLOR;
+      ctx.fillText('R', dc.x * T, (dc.y + 14) * T);
+    }
     ctx.textAlign = 'start';
     ctx.globalAlpha = 1;
   }
@@ -663,8 +740,8 @@ export class Renderer {
       }
     }
 
-    const cx = DIAMOND_CENTER_X * T;
-    const cy = DIAMOND_CENTER_Y * T;
+    const cx = state.mapDef.diamondCenter.x * T;
+    const cy = state.mapDef.diamondCenter.y * T;
     if (!state.diamond.exposed) {
       ctx.fillStyle = 'rgba(40, 35, 10, 0.8)';
       ctx.fillRect(cx, cy, T, T);
@@ -676,7 +753,7 @@ export class Renderer {
 
   // === Resource Nodes ===
 
-  private drawResourceNodes(ctx: CanvasRenderingContext2D): void {
+  private drawResourceNodes(ctx: CanvasRenderingContext2D, state: GameState): void {
     const drawNodeFallback = (x: number, y: number, label: string, color: string) => {
       const px = x * T, py = y * T;
       ctx.beginPath();
@@ -691,11 +768,13 @@ export class Renderer {
     };
 
     // Wood node — forest cluster of multiple trees
+    const woodNode = state.mapDef.resourceNodes.find(n => n.type === ResourceType.Wood);
+    const stoneNode = state.mapDef.resourceNodes.find(n => n.type === ResourceType.Stone);
     const tree1Data = this.sprites.getResourceSprite('tree');
     const tree2Data = this.sprites.getResourceSprite('tree2');
     const tree3Data = this.sprites.getResourceSprite('tree3');
-    if (tree1Data) {
-      const cx = WOOD_NODE_X * T, cy = DIAMOND_CENTER_Y * T;
+    if (tree1Data && woodNode) {
+      const cx = woodNode.x * T, cy = woodNode.y * T;
       const now = Date.now() / 1000;
       const drawTree = (data: [HTMLImageElement, { frameW: number; frameH: number; cols: number; url: string }], x: number, y: number, size: number, phase: number) => {
         const [img, def] = data;
@@ -716,15 +795,15 @@ export class Renderer {
       drawTree(tree1Data, cx, cy, s2, 0.7);
       if (tree2Data) drawTree(tree2Data, cx - T * 3, cy + T, s2 * 0.8, 1.4);
       if (tree3Data) drawTree(tree3Data, cx + T * 3, cy + T, s2 * 0.8, 3.5);
-    } else {
-      drawNodeFallback(WOOD_NODE_X, DIAMOND_CENTER_Y, 'WOOD', 'rgba(76, 175, 80, 0.2)');
+    } else if (woodNode) {
+      drawNodeFallback(woodNode.x, woodNode.y, 'WOOD', 'rgba(76, 175, 80, 0.2)');
     }
 
     // Stone node — herd of sheep
     const sheepData = this.sprites.getResourceSprite('sheep');
     const sheepGrassData = this.sprites.getResourceSprite('sheepGrass');
-    if (sheepData) {
-      const cx = STONE_NODE_X * T, cy = DIAMOND_CENTER_Y * T;
+    if (sheepData && stoneNode) {
+      const cx = stoneNode.x * T, cy = stoneNode.y * T;
       const drawSize = T * 1.8;
       const tick = Math.floor(Date.now() / 200);
       const [img, def] = sheepData;
@@ -744,36 +823,51 @@ export class Renderer {
         const frame = (tick + i * 2) % sDef.cols;
         drawSpriteFrame(ctx, sImg, sDef, frame, p.x - drawSize / 2, p.y - drawSize / 2, drawSize, drawSize);
       }
-    } else {
-      drawNodeFallback(STONE_NODE_X, DIAMOND_CENTER_Y, 'STONE', 'rgba(158, 158, 158, 0.2)');
+    } else if (stoneNode) {
+      drawNodeFallback(stoneNode.x, stoneNode.y, 'STONE', 'rgba(158, 158, 158, 0.2)');
     }
 
     // Gold nodes near HQs — bigger gold resource sprite
     const goldData = this.sprites.getResourceSprite('goldResource');
-    const bHQ = getHQPosition(Team.Bottom);
-    const tHQ = getHQPosition(Team.Top);
+    const bHQ = getHQPosition(Team.Bottom, state.mapDef);
+    const tHQ = getHQPosition(Team.Top, state.mapDef);
     if (goldData) {
       const [img, def] = goldData;
       const drawSize = T * 5;
-      const bx = (bHQ.x + HQ_WIDTH / 2) * T, by = (bHQ.y - 6) * T;
-      const tx = (tHQ.x + HQ_WIDTH / 2) * T, ty = (tHQ.y + HQ_HEIGHT + 6) * T;
+      let bx: number, by: number, tx: number, ty: number;
+      if (state.mapDef.shapeAxis === 'x') {
+        // Landscape: gold mines offset horizontally from HQ
+        bx = (bHQ.x + HQ_WIDTH + 6) * T; by = (bHQ.y + HQ_HEIGHT / 2) * T;
+        tx = (tHQ.x - 6) * T; ty = (tHQ.y + HQ_HEIGHT / 2) * T;
+      } else {
+        // Portrait: gold mines offset vertically from HQ
+        bx = (bHQ.x + HQ_WIDTH / 2) * T; by = (bHQ.y - 6) * T;
+        tx = (tHQ.x + HQ_WIDTH / 2) * T; ty = (tHQ.y + HQ_HEIGHT + 6) * T;
+      }
       drawSpriteFrame(ctx, img, def, 0, bx - drawSize / 2, by - drawSize / 2, drawSize, drawSize);
       drawSpriteFrame(ctx, img, def, 0, tx - drawSize / 2, ty - drawSize / 2, drawSize, drawSize);
     } else {
-      drawNodeFallback(bHQ.x + HQ_WIDTH / 2, bHQ.y - 6, 'GOLD', 'rgba(255, 215, 0, 0.2)');
-      drawNodeFallback(tHQ.x + HQ_WIDTH / 2, tHQ.y + HQ_HEIGHT + 6, 'GOLD', 'rgba(255, 215, 0, 0.2)');
+      const goldOffset = state.mapDef.shapeAxis === 'x' ? 6 : 6;
+      if (state.mapDef.shapeAxis === 'x') {
+        drawNodeFallback(bHQ.x + HQ_WIDTH + goldOffset, bHQ.y + HQ_HEIGHT / 2, 'GOLD', 'rgba(255, 215, 0, 0.2)');
+        drawNodeFallback(tHQ.x - goldOffset, tHQ.y + HQ_HEIGHT / 2, 'GOLD', 'rgba(255, 215, 0, 0.2)');
+      } else {
+        drawNodeFallback(bHQ.x + HQ_WIDTH / 2, bHQ.y - goldOffset, 'GOLD', 'rgba(255, 215, 0, 0.2)');
+        drawNodeFallback(tHQ.x + HQ_WIDTH / 2, tHQ.y + HQ_HEIGHT + goldOffset, 'GOLD', 'rgba(255, 215, 0, 0.2)');
+      }
     }
   }
 
   // === Build Grids ===
 
   private drawBuildGrids(ctx: CanvasRenderingContext2D, state: GameState): void {
-    for (let p = 0; p < 4; p++) {
-      const origin = getBuildGridOrigin(p);
+    const maxP = state.mapDef.maxPlayers;
+    for (let p = 0; p < maxP; p++) {
+      const origin = getBuildGridOrigin(p, state.mapDef);
       const player = state.players[p];
       if (!player) continue;
 
-      const pc = PLAYER_COLORS[p];
+      const pc = PLAYER_COLORS[p % PLAYER_COLORS.length];
       const tc = hexToRgba(pc);
 
       ctx.fillStyle = tc + '0.18)';
@@ -800,7 +894,10 @@ export class Renderer {
 
       ctx.fillStyle = tc + '0.85)';
       ctx.font = 'bold 11px monospace';
-      const ly = p < 2 ? (origin.y + BUILD_GRID_ROWS + 1.2) * T : (origin.y - 0.5) * T;
+      // Label position: below for bottom/left team, above for top/right team
+      const teamIdx = state.mapDef.playerSlots[p]?.teamIndex ?? (p < 2 ? 0 : 1);
+      const labelBelow = teamIdx === 0;
+      const ly = labelBelow ? (origin.y + BUILD_GRID_ROWS + 1.2) * T : (origin.y - 0.5) * T;
       ctx.fillText(`P${p + 1} [${player.race}]`, origin.x * T, ly);
     }
   }
@@ -808,11 +905,12 @@ export class Renderer {
   // === Hut Zones ===
 
   private drawHutZones(ctx: CanvasRenderingContext2D, state: GameState): void {
-    for (let p = 0; p < 4; p++) {
+    const maxP = state.mapDef.maxPlayers;
+    for (let p = 0; p < maxP; p++) {
       const player = state.players[p];
       if (!player) continue;
-      const origin = getHutGridOrigin(p);
-      const pc = PLAYER_COLORS[p];
+      const origin = getHutGridOrigin(p, state.mapDef);
+      const pc = PLAYER_COLORS[p % PLAYER_COLORS.length];
       const tc = hexToRgba(pc);
 
       ctx.fillStyle = tc + '0.15)';
@@ -831,16 +929,18 @@ export class Renderer {
 
       ctx.fillStyle = tc + '0.8)';
       ctx.font = 'bold 9px monospace';
-      const ly = p < 2 ? (origin.y + 1.8) * T : (origin.y - 0.4) * T;
+      const teamIdx = state.mapDef.playerSlots[p]?.teamIndex ?? (p < 2 ? 0 : 1);
+      const labelBelow = teamIdx === 0;
+      const ly = labelBelow ? (origin.y + 1.8) * T : (origin.y - 0.4) * T;
       ctx.fillText(`P${p + 1} HUTS`, origin.x * T, ly);
     }
   }
 
   // === Tower Alleys ===
 
-  private drawTowerAlleys(ctx: CanvasRenderingContext2D, _state: GameState): void {
+  private drawTowerAlleys(ctx: CanvasRenderingContext2D, state: GameState): void {
     for (const team of [Team.Bottom, Team.Top]) {
-      const origin = getTeamAlleyOrigin(team);
+      const origin = getTeamAlleyOrigin(team, state.mapDef);
       const color = team === Team.Bottom ? '41,121,255' : '255,23,68';
 
       ctx.fillStyle = `rgba(${color},0.15)`;
@@ -881,7 +981,7 @@ export class Renderer {
 
     // HQs — sort by bottom edge (pos.y + HQ_HEIGHT)
     for (const team of [Team.Bottom, Team.Top] as Team[]) {
-      const pos = getHQPosition(team);
+      const pos = getHQPosition(team, state.mapDef);
       const sortY = (pos.y + HQ_HEIGHT) * T;
       items.push({ y: sortY, draw: () => this.drawOneHQ(ctx, state, team) });
     }
@@ -922,7 +1022,7 @@ export class Renderer {
   // === HQs ===
 
   private drawOneHQ(ctx: CanvasRenderingContext2D, state: GameState, team: Team): void {
-    const pos = getHQPosition(team);
+    const pos = getHQPosition(team, state.mapDef);
     const hp = state.hqHp[team];
     const color = team === Team.Bottom ? '#2979ff' : '#ff1744';
     const bg = team === Team.Bottom ? 'rgba(41, 121, 255, 0.15)' : 'rgba(255, 23, 68, 0.15)';
@@ -1491,7 +1591,7 @@ export class Renderer {
         const barW = 12, barH = 1.5;
         const barX = ux - barW / 2, barY = py + 2;
         ctx.fillStyle = 'rgba(100, 181, 246, 0.7)';
-        ctx.fillRect(barX, barY, barW * (u.shieldHp / 20), barH);
+        ctx.fillRect(barX, barY, barW * Math.min(1, u.shieldHp / 12), barH);
       }
 
       if (u.carryingDiamond) {
@@ -2292,7 +2392,7 @@ export class Renderer {
   private drawHUD(ctx: CanvasRenderingContext2D, state: GameState, networkLatencyMs?: number, desyncDetected?: boolean, peerDisconnected?: boolean, waitingForAllyMs?: number): void {
     const player = state.players[this.localPlayerId];
     if (!player) return;
-    const W = this.canvas.width;
+    const W = this.canvas.clientWidth;
     const compact = W < 600;  // mobile breakpoint
     const fontSize = compact ? 11 : 14;
     const iconSz = compact ? 16 : 22;
@@ -2417,21 +2517,21 @@ export class Renderer {
 
     // WC3-style network status panel
     if (peerDisconnected) {
-      this.drawNetPanel(ctx, W, this.canvas.height, 'PLAYER DISCONNECTED', 'Game continues locally', -1, fontSize);
+      this.drawNetPanel(ctx, W, this.canvas.clientHeight, 'PLAYER DISCONNECTED', 'Game continues locally', -1, fontSize);
     } else if (desyncDetected) {
-      this.drawNetPanel(ctx, W, this.canvas.height, 'DESYNC DETECTED', 'Game state mismatch', -1, fontSize);
+      this.drawNetPanel(ctx, W, this.canvas.clientHeight, 'DESYNC DETECTED', 'Game state mismatch', -1, fontSize);
     } else if (waitingForAllyMs && waitingForAllyMs > 1500) {
       // Only show after 1.5s — normal Firebase round-trips are ~200-500ms
       const timeoutMs = 5000; // matches CommandSync waitForTurn timeout
       const remaining = Math.max(0, Math.ceil((timeoutMs - waitingForAllyMs) / 1000));
-      this.drawNetPanel(ctx, W, this.canvas.height, 'WAITING FOR ALLY', `Dropping in ${remaining}s...`, waitingForAllyMs / timeoutMs, fontSize);
+      this.drawNetPanel(ctx, W, this.canvas.clientHeight, 'WAITING FOR ALLY', `Dropping in ${remaining}s...`, waitingForAllyMs / timeoutMs, fontSize);
     }
 
     // Prematch
     if (state.matchPhase === 'prematch') {
       const pmFont = compact ? 22 : 32;
       ctx.fillStyle = '#fff'; ctx.font = `bold ${pmFont}px monospace`; ctx.textAlign = 'center';
-      ctx.fillText(`Match starts in ${Math.ceil(state.prematchTimer / 20)}`, W / 2, this.canvas.height / 2);
+      ctx.fillText(`Match starts in ${Math.ceil(state.prematchTimer / 20)}`, W / 2, this.canvas.clientHeight / 2);
       ctx.textAlign = 'start';
     }
 
@@ -2441,13 +2541,13 @@ export class Renderer {
       const localTeamWin = player.team;
       const won = state.winner === localTeamWin;
       ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-      ctx.fillRect(0, this.canvas.height / 2 - 40, W, 80);
+      ctx.fillRect(0, this.canvas.clientHeight / 2 - 40, W, 80);
       ctx.fillStyle = won ? '#4caf50' : '#f44336';
       ctx.font = `bold ${winFont}px monospace`; ctx.textAlign = 'center';
       const winText = won
         ? (compact ? 'VICTORY!' : `VICTORY! (${state.winCondition})`)
         : (compact ? 'DEFEAT!' : `DEFEAT! (${state.winCondition})`);
-      ctx.fillText(winText, W / 2, this.canvas.height / 2 + 12);
+      ctx.fillText(winText, W / 2, this.canvas.clientHeight / 2 + 12);
       ctx.textAlign = 'start';
     }
   }
@@ -2517,7 +2617,7 @@ export class Renderer {
     const localTeam = state.players[this.localPlayerId]?.team ?? Team.Bottom;
     const visibleChats = state.quickChats.filter(c => c.team === localTeam);
     if (visibleChats.length === 0) return;
-    const compact = this.canvas.width < 600;
+    const compact = this.canvas.clientWidth < 600;
     const startX = 12;
     const startY = compact ? 48 : 62;
     const lineH = 18;
@@ -2542,40 +2642,75 @@ export class Renderer {
 
   /** If screen coords (sx, sy) are inside the minimap, return world-pixel coords. */
   minimapHitTest(sx: number, sy: number): { worldX: number; worldY: number } | null {
-    const compact = this.canvas.width < 600;
-    const mmW = compact ? 80 : 120, mmH = compact ? 120 : 180;
-    const mx = this.canvas.width - mmW - 10;
+    const compact = this.canvas.clientWidth < 600;
+    const aspect = this.mapW / this.mapH;
+    let mmW: number, mmH: number;
+    if (aspect >= 1) {
+      mmW = compact ? 120 : 180;
+      mmH = Math.round(mmW / aspect);
+    } else {
+      mmH = compact ? 120 : 180;
+      mmW = Math.round(mmH * aspect);
+    }
+    const mx = this.canvas.clientWidth - mmW - 10;
     const my = compact ? 46 : 60;
     if (sx < mx || sx > mx + mmW || sy < my || sy > my + mmH) return null;
-    const tileX = ((sx - mx) / mmW) * MAP_WIDTH;
-    const tileY = ((sy - my) / mmH) * MAP_HEIGHT;
+    const tileX = ((sx - mx) / mmW) * this.mapW;
+    const tileY = ((sy - my) / mmH) * this.mapH;
     return { worldX: tileX * TILE_SIZE, worldY: tileY * TILE_SIZE };
   }
 
   private drawMinimap(ctx: CanvasRenderingContext2D, state: GameState): void {
-    const compact = this.canvas.width < 600;
-    const mmW = compact ? 80 : 120, mmH = compact ? 120 : 180;
-    const mx = this.canvas.width - mmW - 10;
+    const compact = this.canvas.clientWidth < 600;
+    const mW = this.mapW;
+    const mH = this.mapH;
+    // Minimap aspect ratio matches the actual map
+    const aspect = mW / mH;
+    let mmW: number, mmH: number;
+    if (aspect >= 1) {
+      // Landscape map: wider minimap
+      mmW = compact ? 120 : 180;
+      mmH = Math.round(mmW / aspect);
+    } else {
+      // Portrait map: taller minimap
+      mmH = compact ? 120 : 180;
+      mmW = Math.round(mmH * aspect);
+    }
+    const mx = this.canvas.clientWidth - mmW - 10;
     const my = compact ? 46 : 60; // top-right, just below HUD bar
-    const scaleX = mmW / MAP_WIDTH;
-    const scaleY = mmH / MAP_HEIGHT;
+    const scaleX = mmW / mW;
+    const scaleY = mmH / mH;
 
     // Background — water color
     ctx.fillStyle = 'rgba(60, 110, 100, 0.9)';
     ctx.fillRect(mx - 2, my - 2, mmW + 4, mmH + 4);
 
-    // Map shape — grass fill
+    // Map shape — grass fill (trace the map outline)
     ctx.strokeStyle = '#2a5a2a';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    for (let y = 0; y <= MAP_HEIGHT; y += 4) {
-      const m = getMarginAtRow(y);
-      if (y === 0) ctx.moveTo(mx + m * scaleX, my + y * scaleY);
-      else ctx.lineTo(mx + m * scaleX, my + y * scaleY);
-    }
-    for (let y = MAP_HEIGHT; y >= 0; y -= 4) {
-      const m = getMarginAtRow(y);
-      ctx.lineTo(mx + (MAP_WIDTH - m) * scaleX, my + y * scaleY);
+    if (state.mapDef.shapeAxis === 'y') {
+      // Portrait: trace along y-axis, margins on x
+      for (let y = 0; y <= mH; y += 4) {
+        const range = state.mapDef.getPlayableRange(y);
+        if (y === 0) ctx.moveTo(mx + range.min * scaleX, my + y * scaleY);
+        else ctx.lineTo(mx + range.min * scaleX, my + y * scaleY);
+      }
+      for (let y = mH; y >= 0; y -= 4) {
+        const range = state.mapDef.getPlayableRange(y);
+        ctx.lineTo(mx + range.max * scaleX, my + y * scaleY);
+      }
+    } else {
+      // Landscape: trace along x-axis, margins on y
+      for (let x = 0; x <= mW; x += 4) {
+        const range = state.mapDef.getPlayableRange(x);
+        if (x === 0) ctx.moveTo(mx + x * scaleX, my + range.min * scaleY);
+        else ctx.lineTo(mx + x * scaleX, my + range.min * scaleY);
+      }
+      for (let x = mW; x >= 0; x -= 4) {
+        const range = state.mapDef.getPlayableRange(x);
+        ctx.lineTo(mx + x * scaleX, my + range.max * scaleY);
+      }
     }
     ctx.closePath();
     ctx.fillStyle = '#3a6b3a';
@@ -2583,13 +2718,16 @@ export class Renderer {
     ctx.stroke();
 
     // Diamond cells (gold blob)
+    const dc = state.mapDef.diamondCenter;
     const goldRemaining = state.diamondCells.some(c => c.gold > 0);
     if (goldRemaining) {
       ctx.fillStyle = 'rgba(200, 170, 20, 0.6)';
-      const cx = mx + DIAMOND_CENTER_X * scaleX;
-      const cy = my + DIAMOND_CENTER_Y * scaleY;
-      const rw = 10 * scaleX;
-      const rh = 12 * scaleY;
+      const cx = mx + dc.x * scaleX;
+      const cy = my + dc.y * scaleY;
+      const dHW = state.mapDef.diamondHalfW;
+      const dHH = state.mapDef.diamondHalfH;
+      const rw = dHW * scaleX;
+      const rh = dHH * scaleY;
       ctx.beginPath();
       ctx.moveTo(cx, cy - rh);
       ctx.lineTo(cx + rw, cy);
@@ -2667,7 +2805,7 @@ export class Renderer {
 
     // HQs
     for (const team of [Team.Bottom, Team.Top]) {
-      const hq = getHQPosition(team);
+      const hq = getHQPosition(team, state.mapDef);
       ctx.fillStyle = team === Team.Bottom ? '#2979ff' : '#ff1744';
       ctx.fillRect(mx + hq.x * scaleX, my + hq.y * scaleY, HQ_WIDTH * scaleX, HQ_HEIGHT * scaleY);
     }
@@ -2675,8 +2813,10 @@ export class Renderer {
     // Recent quick-chat badges near team HQ
     const recentChats = state.quickChats.filter(c => c.team === localTeam && c.age < 20);
     for (const c of recentChats) {
-      const hq = getHQPosition(c.team);
-      const bx = mx + (hq.x + HQ_WIDTH / 2 + (c.playerId % 2 === 0 ? -4 : 4)) * scaleX;
+      const hq = getHQPosition(c.team, state.mapDef);
+      // Offset each chat badge slightly so multiple players' badges don't overlap
+      const chatOffset = (c.playerId % 3 - 1) * 4; // -4, 0, +4
+      const bx = mx + (hq.x + HQ_WIDTH / 2 + chatOffset) * scaleX;
       const by = my + (hq.y + HQ_HEIGHT / 2) * scaleY;
       const style = quickChatStyle(c.message);
       ctx.fillStyle = style.color;
@@ -2687,8 +2827,8 @@ export class Renderer {
 
     // Camera viewport box
     const vx = this.camera.x, vy = this.camera.y;
-    const vw = this.canvas.width / this.camera.zoom;
-    const vh = this.canvas.height / this.camera.zoom;
+    const vw = this.canvas.clientWidth / this.camera.zoom;
+    const vh = this.canvas.clientHeight / this.camera.zoom;
     ctx.strokeStyle = '#fff';
     ctx.lineWidth = 1;
     ctx.strokeRect(

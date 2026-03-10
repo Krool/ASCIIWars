@@ -3,7 +3,7 @@ import { BuildingType, Race, ResourceType } from '../simulation/types';
 // ============================================================
 // BUILDING SPRITES (Tiny Swords)
 // ============================================================
-// P0 = Blue, P1 = Purple (bottom team), P2 = Red, P3 = Yellow (top team)
+// P0 = Blue, P1 = Purple, P2 = Red (team 0), P3 = Yellow, P4 = Black, P5 = Blue (team 1)
 import blueHouse from '../assets/images/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Buildings/Blue Buildings/House1.png?url';
 import blueBarracks from '../assets/images/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Buildings/Blue Buildings/Barracks.png?url';
 import blueArchery from '../assets/images/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Buildings/Blue Buildings/Archery.png?url';
@@ -28,6 +28,12 @@ import yellowArchery from '../assets/images/Tiny Swords (Free Pack)/Tiny Swords 
 import yellowMonastery from '../assets/images/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Buildings/Yellow Buildings/Monastery.png?url';
 import yellowTower from '../assets/images/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Buildings/Yellow Buildings/Tower.png?url';
 import yellowCastle from '../assets/images/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Buildings/Yellow Buildings/Castle.png?url';
+import blackHouse from '../assets/images/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Buildings/Black Buildings/House1.png?url';
+import blackBarracks from '../assets/images/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Buildings/Black Buildings/Barracks.png?url';
+import blackArchery from '../assets/images/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Buildings/Black Buildings/Archery.png?url';
+import blackMonastery from '../assets/images/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Buildings/Black Buildings/Monastery.png?url';
+import blackTower from '../assets/images/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Buildings/Black Buildings/Tower.png?url';
+import blackCastle from '../assets/images/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Buildings/Black Buildings/Castle.png?url';
 
 // ============================================================
 // UNIT SPRITES — Crown (Tiny Swords humans, Blue + Red)
@@ -77,6 +83,17 @@ import harvesterYellowRunMeat from '../assets/images/Tiny Swords (Free Pack)/Tin
 import harvesterYellowMineGold from '../assets/images/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Yellow Units/Pawn/Pawn_Interact Pickaxe.png?url';
 import harvesterYellowMineWood from '../assets/images/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Yellow Units/Pawn/Pawn_Interact Axe.png?url';
 import harvesterYellowMineStone from '../assets/images/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Yellow Units/Pawn/Pawn_Interact Knife.png?url';
+import crownMeleeBlack from '../assets/images/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Black Units/Warrior/Warrior_Run.png?url';
+import crownRangedBlack from '../assets/images/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Black Units/Archer/Archer_Run.png?url';
+import crownCasterBlack from '../assets/images/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Black Units/Monk/Run.png?url';
+import harvesterBlack from '../assets/images/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Black Units/Pawn/Pawn_Idle.png?url';
+import harvesterBlackRun from '../assets/images/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Black Units/Pawn/Pawn_Run.png?url';
+import harvesterBlackRunGold from '../assets/images/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Black Units/Pawn/Pawn_Run Gold.png?url';
+import harvesterBlackRunWood from '../assets/images/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Black Units/Pawn/Pawn_Run Wood.png?url';
+import harvesterBlackRunMeat from '../assets/images/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Black Units/Pawn/Pawn_Run Meat.png?url';
+import harvesterBlackMineGold from '../assets/images/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Black Units/Pawn/Pawn_Interact Pickaxe.png?url';
+import harvesterBlackMineWood from '../assets/images/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Black Units/Pawn/Pawn_Interact Axe.png?url';
+import harvesterBlackMineStone from '../assets/images/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Black Units/Pawn/Pawn_Interact Knife.png?url';
 
 // ============================================================
 // UNIT SPRITES — Horde (CHARACTER MEGAPACK Orcs — animated strips)
@@ -150,6 +167,9 @@ import crownCasterAtkBlue from '../assets/images/Tiny Swords (Free Pack)/Tiny Sw
 import crownCasterAtkPurple from '../assets/images/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Purple Units/Monk/Heal.png?url';
 import crownCasterAtkRed from '../assets/images/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Red Units/Monk/Heal.png?url';
 import crownCasterAtkYellow from '../assets/images/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Yellow Units/Monk/Heal.png?url';
+import crownMeleeAtkBlack from '../assets/images/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Black Units/Warrior/Warrior_Attack1.png?url';
+import crownRangedAtkBlack from '../assets/images/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Black Units/Archer/Archer_Shoot.png?url';
+import crownCasterAtkBlack from '../assets/images/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Black Units/Monk/Heal.png?url';
 // Horde (CHARACTER MEGAPACK)
 import hordeMeleeAtk from '../assets/images/CHARACTER MEGAPACK/CHARACTER MEGAPACK/Orc_Barbare_01 (Green Skinned)/Orc_Barbare_01_ATK_Full_12x1.png?url';
 import hordeRangedAtk from '../assets/images/CHARACTER MEGAPACK/CHARACTER MEGAPACK/Orc_Archer_01 (Green Skinned)/Orc_Archer_01_ATK_Full_18x1.png?url';
@@ -393,9 +413,9 @@ interface RaceUnitSprites {
 
 const RACE_UNIT_SPRITES: Record<Race, RaceUnitSprites> = {
   [Race.Crown]: {
-    melee:  { 0: tsSheet(crownMeleeBlue, 1152, 192), 1: tsSheet(crownMeleePurple, 1152, 192), 2: tsSheet(crownMeleeRed, 1152, 192), 3: tsSheet(crownMeleeYellow, 1152, 192) },
-    ranged: { 0: tsSheet(crownRangedBlue, 768, 192), 1: tsSheet(crownRangedPurple, 768, 192), 2: tsSheet(crownRangedRed, 768, 192), 3: tsSheet(crownRangedYellow, 768, 192) },
-    caster: { 0: tsSheet(crownCasterBlue, 768, 192), 1: tsSheet(crownCasterPurple, 768, 192), 2: tsSheet(crownCasterRed, 768, 192), 3: tsSheet(crownCasterYellow, 768, 192) },
+    melee:  { 0: tsSheet(crownMeleeBlue, 1152, 192), 1: tsSheet(crownMeleePurple, 1152, 192), 2: tsSheet(crownMeleeRed, 1152, 192), 3: tsSheet(crownMeleeYellow, 1152, 192), 4: tsSheet(crownMeleeBlack, 1152, 192), 5: tsSheet(crownMeleeBlue, 1152, 192) },
+    ranged: { 0: tsSheet(crownRangedBlue, 768, 192), 1: tsSheet(crownRangedPurple, 768, 192), 2: tsSheet(crownRangedRed, 768, 192), 3: tsSheet(crownRangedYellow, 768, 192), 4: tsSheet(crownRangedBlack, 768, 192), 5: tsSheet(crownRangedBlue, 768, 192) },
+    caster: { 0: tsSheet(crownCasterBlue, 768, 192), 1: tsSheet(crownCasterPurple, 768, 192), 2: tsSheet(crownCasterRed, 768, 192), 3: tsSheet(crownCasterYellow, 768, 192), 4: tsSheet(crownCasterBlack, 768, 192), 5: tsSheet(crownCasterBlue, 768, 192) },
   },
   [Race.Horde]: {
     melee:  cmStrip(hordeMelee, 57 * 5, 58, 5),
@@ -442,9 +462,9 @@ const RACE_UNIT_SPRITES: Record<Race, RaceUnitSprites> = {
 // Attack animation sprites (same structure as RACE_UNIT_SPRITES)
 const RACE_ATK_SPRITES: Record<Race, Partial<RaceUnitSprites>> = {
   [Race.Crown]: {
-    melee:  { 0: tsSheet(crownMeleeAtkBlue, 768, 192), 1: tsSheet(crownMeleeAtkPurple, 768, 192), 2: tsSheet(crownMeleeAtkRed, 768, 192), 3: tsSheet(crownMeleeAtkYellow, 768, 192) },
-    ranged: { 0: tsSheet(crownRangedAtkBlue, 1536, 192), 1: tsSheet(crownRangedAtkPurple, 1536, 192), 2: tsSheet(crownRangedAtkRed, 1536, 192), 3: tsSheet(crownRangedAtkYellow, 1536, 192) },
-    caster: { 0: tsSheet(crownCasterAtkBlue, 2112, 192), 1: tsSheet(crownCasterAtkPurple, 2112, 192), 2: tsSheet(crownCasterAtkRed, 2112, 192), 3: tsSheet(crownCasterAtkYellow, 2112, 192) },
+    melee:  { 0: tsSheet(crownMeleeAtkBlue, 768, 192), 1: tsSheet(crownMeleeAtkPurple, 768, 192), 2: tsSheet(crownMeleeAtkRed, 768, 192), 3: tsSheet(crownMeleeAtkYellow, 768, 192), 4: tsSheet(crownMeleeAtkBlack, 768, 192), 5: tsSheet(crownMeleeAtkBlue, 768, 192) },
+    ranged: { 0: tsSheet(crownRangedAtkBlue, 1536, 192), 1: tsSheet(crownRangedAtkPurple, 1536, 192), 2: tsSheet(crownRangedAtkRed, 1536, 192), 3: tsSheet(crownRangedAtkYellow, 1536, 192), 4: tsSheet(crownRangedAtkBlack, 1536, 192), 5: tsSheet(crownRangedAtkBlue, 1536, 192) },
+    caster: { 0: tsSheet(crownCasterAtkBlue, 2112, 192), 1: tsSheet(crownCasterAtkPurple, 2112, 192), 2: tsSheet(crownCasterAtkRed, 2112, 192), 3: tsSheet(crownCasterAtkYellow, 2112, 192), 4: tsSheet(crownCasterAtkBlack, 2112, 192), 5: tsSheet(crownCasterAtkBlue, 2112, 192) },
   },
   [Race.Horde]: {
     melee:  cmStrip(hordeMeleeAtk, 684, 58, 12),
@@ -658,6 +678,8 @@ const HARVESTER_SPRITES: { [pid: number]: HarvesterSpriteSet } = {
   1: pawnSet(harvesterPurple, harvesterPurpleRun, harvesterPurpleRunGold, harvesterPurpleRunWood, harvesterPurpleRunMeat, harvesterPurpleMineGold, harvesterPurpleMineWood, harvesterPurpleMineStone),
   2: pawnSet(harvesterRed, harvesterRedRun, harvesterRedRunGold, harvesterRedRunWood, harvesterRedRunMeat, harvesterRedMineGold, harvesterRedMineWood, harvesterRedMineStone),
   3: pawnSet(harvesterYellow, harvesterYellowRun, harvesterYellowRunGold, harvesterYellowRunWood, harvesterYellowRunMeat, harvesterYellowMineGold, harvesterYellowMineWood, harvesterYellowMineStone),
+  4: pawnSet(harvesterBlack, harvesterBlackRun, harvesterBlackRunGold, harvesterBlackRunWood, harvesterBlackRunMeat, harvesterBlackMineGold, harvesterBlackMineWood, harvesterBlackMineStone),
+  5: pawnSet(harvesterBlue, harvesterBlueRun, harvesterBlueRunGold, harvesterBlueRunWood, harvesterBlueRunMeat, harvesterBlueMineGold, harvesterBlueMineWood, harvesterBlueMineStone),
 };
 
 // ============================================================
@@ -674,6 +696,10 @@ const BUILDING_URLS: Record<string, string> = {
   '2/caster': redMonastery, '2/tower': redTower, '2/hq': redCastle,
   '3/hut': yellowHouse, '3/melee': yellowBarracks, '3/ranged': yellowArchery,
   '3/caster': yellowMonastery, '3/tower': yellowTower, '3/hq': yellowCastle,
+  '4/hut': blackHouse, '4/melee': blackBarracks, '4/ranged': blackArchery,
+  '4/caster': blackMonastery, '4/tower': blackTower, '4/hq': blackCastle,
+  '5/hut': blueHouse, '5/melee': blueBarracks, '5/ranged': blueArchery,
+  '5/caster': blueMonastery, '5/tower': blueTower, '5/hq': blueCastle,
 };
 
 const BUILDING_KEY: Partial<Record<BuildingType, string>> = {

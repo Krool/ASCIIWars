@@ -4,7 +4,7 @@ import { SpriteLoader, drawSpriteFrame, drawGridFrame } from '../rendering/Sprit
 import { Race, BuildingType, StatusType, StatusEffect, TICK_RATE } from '../simulation/types';
 import { UNIT_STATS, RACE_COLORS, UPGRADE_TREES } from '../simulation/data';
 import { getUnitUpgradeMultipliers } from '../simulation/GameState';
-import { PartyManager, PartyState, PartyPlayer } from '../network/PartyManager';
+import { PartyManager, PartyState, PartyPlayer, getPartyPlayerCount } from '../network/PartyManager';
 import { isFirebaseConfigured, initFirebase } from '../network/FirebaseService';
 import { PlayerProfile, ALL_AVATARS } from '../profile/ProfileData';
 import { BotDifficultyLevel } from '../simulation/BotAI';
@@ -610,7 +610,7 @@ export class TitleScene implements Scene {
   private joinInputActive = false;
   private firebaseReady = false;
   private partyDifficultyIndex = 1; // index into PARTY_DIFFICULTY_OPTIONS (default Medium)
-  onPartyStart: ((party: PartyState, isHost: boolean) => void) | null = null;
+  onPartyStart: ((party: PartyState, localSlot: number) => void) | null = null;
 
   constructor(manager: SceneManager, canvas: HTMLCanvasElement, ui: UIAssets, sprites: SpriteLoader) {
     this.manager = manager;
@@ -705,15 +705,15 @@ export class TitleScene implements Scene {
     if (s && s.status === 'starting' && this.onPartyStart && !this.partyStartFired) {
       this.partyStartFired = true;
       this.matchmaking = false;
-      this.onPartyStart(s, this.party?.isHost ?? true);
+      this.onPartyStart(s, this.party?.localSlotIndex ?? 0);
     }
-    // Auto-start: when matchmaking and both players are present, host starts immediately
-    if (s && s.guest && this.matchmaking && this.party?.isHost && s.status === 'waiting') {
+    // Auto-start: when matchmaking and 2+ players present, host starts immediately
+    if (s && getPartyPlayerCount(s) >= 2 && this.matchmaking && this.party?.isHost && s.status === 'waiting') {
       this.matchmaking = false;
       this.party.startGame();
     }
     // If we joined via matchmaking as guest, just wait for host to start (clear matchmaking flag)
-    if (s && s.guest && this.matchmaking && !this.party?.isHost) {
+    if (s && getPartyPlayerCount(s) >= 2 && this.matchmaking && !this.party?.isHost) {
       this.matchmaking = false;
     }
     // Party destroyed while matchmaking
@@ -731,8 +731,8 @@ export class TitleScene implements Scene {
     join: { x: number; y: number; w: number; h: number };
     gallery: { x: number; y: number; w: number; h: number };
   } {
-    const w = this.canvas.width;
-    const h = this.canvas.height;
+    const w = this.canvas.clientWidth;
+    const h = this.canvas.clientHeight;
     const btnW = Math.min(w * 0.38, 280);
     const btnH = Math.min(h * 0.07, 52);
     const gap = 10;
@@ -748,15 +748,16 @@ export class TitleScene implements Scene {
 
   private getPartyLayout(): {
     panel: { x: number; y: number; w: number; h: number };
-    slot1Race: { x: number; y: number; w: number; h: number };
-    slot2Race: { x: number; y: number; w: number; h: number };
+    slotRects: { x: number; y: number; w: number; h: number }[]; // one per maxSlots
     start: { x: number; y: number; w: number; h: number };
     leave: { x: number; y: number; w: number; h: number };
     code: { x: number; y: number; w: number; h: number };
+    mapToggle: { x: number; y: number; w: number; h: number };
     diffBtns: { x: number; y: number; w: number; h: number }[];
   } {
-    const w = this.canvas.width;
-    const h = this.canvas.height;
+    const w = this.canvas.clientWidth;
+    const h = this.canvas.clientHeight;
+    const maxSlots = this.partyState?.maxSlots ?? 4;
     const panelW = Math.min(w * 0.98, 616);
     const panelH = Math.min(h * 0.588, 420);
     const px = (w - panelW) / 2;
@@ -764,7 +765,24 @@ export class TitleScene implements Scene {
     const slotW = 40;
     const slotH = 40;
     const slotY = py + panelH * 0.40;
-    const halfW = panelW / 2;
+
+    // Dynamic slot positioning: divide panel width evenly
+    const slotRects: { x: number; y: number; w: number; h: number }[] = [];
+    const colW = panelW / maxSlots;
+    for (let i = 0; i < maxSlots; i++) {
+      slotRects.push({
+        x: px + colW * i + colW / 2 - slotW / 2,
+        y: slotY,
+        w: slotW,
+        h: slotH,
+      });
+    }
+
+    // Map toggle (host only, below code)
+    const mapTogW = panelW * 0.5;
+    const mapTogH = 24;
+    const mapTogX = px + (panelW - mapTogW) / 2;
+    const mapTogY = py + panelH * 0.20;
 
     // Difficulty buttons (host only, between slots and start button)
     const dbtnW = panelW * 0.18;
@@ -782,17 +800,19 @@ export class TitleScene implements Scene {
 
     return {
       panel: { x: px, y: py, w: panelW, h: panelH },
-      slot1Race: { x: px + halfW * 0.5 - slotW / 2, y: slotY, w: slotW, h: slotH },
-      slot2Race: { x: px + halfW + halfW * 0.5 - slotW / 2, y: slotY, w: slotW, h: slotH },
+      slotRects,
       start: { x: px + panelW * 0.15, y: py + panelH - 56, w: panelW * 0.42, h: 44 },
       leave: { x: px + panelW * 0.60, y: py + panelH - 56, w: panelW * 0.28, h: 44 },
       code: { x: px + panelW * 0.25, y: py + 8, w: panelW * 0.5, h: 36 },
+      mapToggle: { x: mapTogX, y: mapTogY, w: mapTogW, h: mapTogH },
       diffBtns,
     };
   }
 
   private hitRect(cx: number, cy: number, r: { x: number; y: number; w: number; h: number }): boolean {
-    return cx >= r.x && cx <= r.x + r.w && cy >= r.y && cy <= r.y + r.h;
+    // Inflate hit area by pad on each side for mobile tappability (min 44px targets)
+    const pad = 6;
+    return cx >= r.x - pad && cx <= r.x + r.w + pad && cy >= r.y - pad && cy <= r.y + r.h + pad;
   }
 
   private handleClick(cx: number, cy: number): void {
@@ -823,11 +843,18 @@ export class TitleScene implements Scene {
     // If in a party, handle party UI
     if (this.partyState) {
       const pl = this.getPartyLayout();
-      // Click race icon to cycle (only own slot)
       const isHost = this.party?.isHost;
-      const mySlot = isHost ? pl.slot1Race : pl.slot2Race;
-      if (this.hitRect(cx, cy, mySlot)) {
+      const localSlot = this.party?.localSlotIndex ?? 0;
+      // Click own slot's race icon to cycle
+      if (pl.slotRects[localSlot] && this.hitRect(cx, cy, pl.slotRects[localSlot])) {
         this.cycleRace();
+        return;
+      }
+      // Map toggle (host only)
+      if (isHost && this.hitRect(cx, cy, pl.mapToggle)) {
+        const currentMapId = this.partyState.mapId ?? 'duel';
+        const newMapId = currentMapId === 'duel' ? 'skirmish' : 'duel';
+        this.party?.updateMap(newMapId);
         return;
       }
       // Difficulty buttons (host only)
@@ -840,7 +867,7 @@ export class TitleScene implements Scene {
           }
         }
       }
-      if (isHost && this.hitRect(cx, cy, pl.start) && this.partyState.guest) {
+      if (isHost && this.hitRect(cx, cy, pl.start) && getPartyPlayerCount(this.partyState) >= 2) {
         this.party?.startGame();
         return;
       }
@@ -858,8 +885,8 @@ export class TitleScene implements Scene {
 
     // If join input is active, clicking outside the input box dismisses
     if (this.joinInputActive) {
-      const w = this.canvas.width;
-      const h = this.canvas.height;
+      const w = this.canvas.clientWidth;
+      const h = this.canvas.clientHeight;
       const boxW = Math.min(w * 0.55, 340);
       const boxH = Math.min(h * 0.16, 120);
       const boxX = (w - boxW) / 2;
@@ -985,9 +1012,9 @@ export class TitleScene implements Scene {
 
   private cycleRace(): void {
     if (!this.party || !this.partyState) return;
-    const currentRace = this.party.isHost
-      ? this.partyState.host.race
-      : this.partyState.guest?.race ?? Race.Crown;
+    const localSlot = this.party.localSlotIndex;
+    const myPlayer = this.partyState.players[String(localSlot)];
+    const currentRace = myPlayer?.race ?? Race.Crown;
     const idx = ALL_RACES.indexOf(currentRace);
     const nextRace = ALL_RACES[(idx + 1) % ALL_RACES.length];
     this.party.updateRace(nextRace);
@@ -1169,8 +1196,8 @@ export class TitleScene implements Scene {
   }
 
   render(ctx: CanvasRenderingContext2D): void {
-    const w = ctx.canvas.width;
-    const h = ctx.canvas.height;
+    const w = ctx.canvas.clientWidth;
+    const h = ctx.canvas.clientHeight;
     ctx.imageSmoothingEnabled = false;
 
     // Clean background: sky gradient + solid grass ground
@@ -1234,7 +1261,9 @@ export class TitleScene implements Scene {
       const vsW = Math.min(w * 0.85, 480);
       const vsX = (w - vsW) / 2;
 
-      this.ui.drawWoodTable(ctx, vsX, vsY, vsW, vsH);
+      const vsPadX = Math.round(vsW * 0.075);
+      const vsPadY = Math.round(vsH * 0.075);
+      this.ui.drawWoodTable(ctx, vsX - vsPadX, vsY - vsPadY, vsW + vsPadX * 2, vsH + vsPadY * 2);
 
       const fontSize = Math.max(10, Math.min(vsH / (teamSize + 1) * 0.45, 14));
       ctx.textBaseline = 'middle';
@@ -1630,11 +1659,15 @@ export class TitleScene implements Scene {
   private renderPartyPanel(ctx: CanvasRenderingContext2D, w: number, _h: number): void {
     const pl = this.getPartyLayout();
     const ps = this.partyState!;
+    const maxSlots = ps.maxSlots ?? 4;
 
-    // Panel background
-    this.ui.drawWoodTable(ctx, pl.panel.x, pl.panel.y, pl.panel.w, pl.panel.h);
+    // Panel background — oversized for 9-slice dead space
+    const ppPadX = Math.round(pl.panel.w * 0.075);
+    const ppPadY = Math.round(pl.panel.h * 0.05);
+    this.ui.drawWoodTable(ctx, pl.panel.x - ppPadX, pl.panel.y - ppPadY, pl.panel.w + ppPadX * 2, pl.panel.h + ppPadY * 2);
 
     const fontSize = Math.max(10, Math.min(pl.panel.w / 28, 15));
+    const isHost = this.party?.isHost;
 
     // Header ribbon with invite code
     const codeRibW = pl.panel.w * 0.6;
@@ -1655,34 +1688,68 @@ export class TitleScene implements Scene {
     ctx.fillStyle = 'rgba(255,255,255,0.4)';
     ctx.fillText('click code to copy', w / 2, codeRibY + codeRibH + 10);
 
-    // Player slots
-    const halfW = pl.panel.w / 2;
-    this.renderPlayerSlot(ctx, pl.panel.x, pl.panel.y + pl.panel.h * 0.30, halfW, ps.host, true, pl.slot1Race);
-    if (ps.guest) {
-      this.renderPlayerSlot(ctx, pl.panel.x + halfW, pl.panel.y + pl.panel.h * 0.30, halfW, ps.guest, false, pl.slot2Race);
-    } else {
-      // Empty slot
-      const slotCx = pl.panel.x + halfW + halfW / 2;
-      const slotY = pl.panel.y + pl.panel.h * 0.38;
-      ctx.font = `bold ${fontSize}px monospace`;
+    // Map toggle (host only)
+    {
+      const mt = pl.mapToggle;
+      const mapId = ps.mapId ?? 'duel';
+      const mapLabel = mapId === 'skirmish' ? 'SKIRMISH (3v3)' : 'DUEL (2v2)';
+      // Background
+      ctx.fillStyle = 'rgba(0,0,0,0.25)';
+      ctx.fillRect(mt.x, mt.y, mt.w, mt.h);
+      ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(mt.x, mt.y, mt.w, mt.h);
+
+      // Label
+      const mtFontSize = Math.max(8, mt.h * 0.5);
+      ctx.font = `bold ${mtFontSize}px monospace`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillStyle = 'rgba(255,255,255,0.3)';
-      ctx.fillText('Waiting...', slotCx, slotY);
-      ctx.font = `${Math.max(8, fontSize * 0.7)}px monospace`;
-      ctx.fillText('Share the code!', slotCx, slotY + fontSize * 1.5);
+      ctx.fillStyle = '#fff';
+      ctx.fillText(`MAP: ${mapLabel}`, mt.x + mt.w / 2, mt.y + mt.h / 2);
+
+      // Arrows if host
+      if (isHost) {
+        ctx.fillStyle = 'rgba(255,255,255,0.6)';
+        ctx.fillText('<', mt.x + 10, mt.y + mt.h / 2);
+        ctx.fillText('>', mt.x + mt.w - 10, mt.y + mt.h / 2);
+      }
     }
 
-    // Divider line between slots
-    ctx.strokeStyle = 'rgba(255,255,255,0.15)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(pl.panel.x + halfW, pl.panel.y + pl.panel.h * 0.28);
-    ctx.lineTo(pl.panel.x + halfW, pl.panel.y + pl.panel.h * 0.75);
-    ctx.stroke();
+    // Player slots
+    const colW = pl.panel.w / maxSlots;
+    const localSlot = this.party?.localSlotIndex ?? 0;
+    for (let i = 0; i < maxSlots; i++) {
+      const player = ps.players[String(i)];
+      const slotRect = pl.slotRects[i];
+      if (player) {
+        const isSlotHost = i === 0;
+        this.renderPlayerSlot(ctx, pl.panel.x + colW * i, pl.panel.y + pl.panel.h * 0.30, colW, player, isSlotHost, slotRect, i === localSlot);
+      } else {
+        // Empty slot
+        const slotCx = pl.panel.x + colW * i + colW / 2;
+        const slotY = pl.panel.y + pl.panel.h * 0.38;
+        ctx.font = `bold ${Math.max(8, fontSize * 0.8)}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = 'rgba(255,255,255,0.25)';
+        ctx.fillText('Empty', slotCx, slotY);
+        ctx.font = `${Math.max(7, fontSize * 0.6)}px monospace`;
+        ctx.fillText('(Bot)', slotCx, slotY + fontSize * 1.2);
+      }
+
+      // Divider lines between slots
+      if (i > 0) {
+        ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(pl.panel.x + colW * i, pl.panel.y + pl.panel.h * 0.28);
+        ctx.lineTo(pl.panel.x + colW * i, pl.panel.y + pl.panel.h * 0.75);
+        ctx.stroke();
+      }
+    }
 
     // Difficulty selector (host sees buttons, guest sees label)
-    const isHost = this.party?.isHost;
     {
       const diffY = pl.diffBtns[0].y;
       const diffLabelSize = Math.max(7, fontSize * 0.65);
@@ -1734,9 +1801,9 @@ export class TitleScene implements Scene {
       }
     }
 
-    // START button (host only, enabled when 2 players)
+    // START button (host only, enabled when 2+ players)
     if (isHost) {
-      const canStart = !!ps.guest;
+      const canStart = getPartyPlayerCount(ps) >= 2;
       ctx.globalAlpha = canStart ? 1 : 0.4;
       this.ui.drawSword(ctx, pl.start.x, pl.start.y, pl.start.w, pl.start.h, canStart ? 0 : 4); // blue or dark
       const startFontSize = Math.max(10, Math.min(pl.start.h * 0.35, 16));
@@ -1770,6 +1837,7 @@ export class TitleScene implements Scene {
     x: number, _y: number, slotW: number,
     player: PartyPlayer, isHost: boolean,
     raceRect: { x: number; y: number; w: number; h: number },
+    isLocal = false,
   ): void {
     const cx = x + slotW / 2;
     const fontSize = Math.max(10, Math.min(slotW / 10, 14));
@@ -1805,9 +1873,7 @@ export class TitleScene implements Scene {
     ctx.fillText(isHost ? 'HOST' : 'GUEST', cx, labelY + fontSize * 2.4);
 
     // "Click to change" hint if this is the local player's slot
-    const isLocalSlot = this.party &&
-      ((this.party.isHost && isHost) || (!this.party.isHost && !isHost));
-    if (isLocalSlot) {
+    if (isLocal) {
       ctx.font = `${Math.max(7, fontSize * 0.6)}px monospace`;
       ctx.fillStyle = 'rgba(255,255,255,0.35)';
       ctx.fillText('click to change', cx, raceRect.y - 10);

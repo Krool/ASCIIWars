@@ -1,9 +1,10 @@
 import {
-  GameState, GameCommand, Race, BuildingType, Lane, Team,
+  GameState, GameCommand, Race, BuildingType, Lane, Team, HQ_WIDTH, HQ_HEIGHT,
   BUILD_GRID_COLS, BUILD_GRID_ROWS, HarvesterAssignment, HQ_HP,
   SHARED_ALLEY_COLS, SHARED_ALLEY_ROWS,
 } from './types';
-import { RACE_BUILDING_COSTS, RACE_UPGRADE_COSTS } from './data';
+import { RACE_BUILDING_COSTS, RACE_UPGRADE_COSTS, UPGRADE_TREES, UpgradeNodeDef, UNIT_STATS } from './data';
+import { getHQPosition } from './GameState';
 
 // --- Bot Difficulty System ---
 
@@ -15,64 +16,98 @@ export enum BotDifficultyLevel {
 }
 
 export interface BotDifficulty {
-  /** Ticks between build decisions (higher = slower). Medium baseline: ~40 */
+  /** Ticks between build decisions. All difficulties use same baseline (25). */
   buildSpeed: number;
-  /** Ticks between upgrade checks (higher = slower). Medium baseline: ~60 */
+  /** Ticks between upgrade checks. All difficulties use same baseline (30). */
   upgradeSpeed: number;
   /** Min spawner count before considering upgrades. 99 = never */
   upgradeThreshold: number;
-  /** Min game minutes before bot will fire nuke */
+  /** Min game minutes before bot will fire nuke. 99 = never */
   nukeMinTime: number;
   /** Lane IQ: 'random' = random picks, 'basic' = defend only, 'threat' = full analysis */
   laneIQ: 'random' | 'basic' | 'threat';
   /** Whether bot adapts build order to enemy race archetypes */
   counterBuild: boolean;
-  /** Multiplier on urgency scaling (0 = no urgency, 1 = current, 2 = hyper-reactive) */
-  urgencyMultiplier: number;
+  /** Whether bot uses value function to decide build vs upgrade vs hut */
+  useValueFunction: boolean;
+  /** Whether bot dynamically shifts build ratios based on combat telemetry */
+  useDynamicShift: boolean;
+  /** Whether bot uses matchup-aware upgrade scoring (vs fixed race bias) */
+  useSmartUpgrades: boolean;
   /** Whether to use per-race optimized nightmare profiles */
   useNightmareProfiles: boolean;
+  /** Chance to make a suboptimal random decision (0 = perfect, 1 = fully random) */
+  mistakeRate: number;
+  /** Max total spawners (melee+ranged+caster) the bot will build. 99 = unlimited */
+  maxSpawners: number;
+  /** Max harvester huts the bot will build. 99 = unlimited */
+  maxHuts: number;
 }
 
 export const BOT_DIFFICULTY_PRESETS: Record<BotDifficultyLevel, BotDifficulty> = {
+  // Easy: capped army, slow builds, no upgrades/nukes — clearly inferior economy & army
   [BotDifficultyLevel.Easy]: {
-    buildSpeed: 80,
-    upgradeSpeed: 999999,
+    buildSpeed: 60,           // 3 seconds between builds
+    upgradeSpeed: 999999,     // never upgrades
     upgradeThreshold: 99,
-    nukeMinTime: 4.0,
+    nukeMinTime: 99,          // never nukes
     laneIQ: 'random',
     counterBuild: false,
-    urgencyMultiplier: 0,
+    useValueFunction: false,
+    useDynamicShift: false,
+    useSmartUpgrades: false,
     useNightmareProfiles: false,
+    mistakeRate: 0.10,
+    maxSpawners: 3,           // hard cap: only 3 spawners total
+    maxHuts: 2,               // hard cap: only 2 huts
   },
+  // Medium: moderate caps, moderate speed, no upgrades
   [BotDifficultyLevel.Medium]: {
-    buildSpeed: 40,
-    upgradeSpeed: 60,
-    upgradeThreshold: 2,
-    nukeMinTime: 1.5,
-    laneIQ: 'threat',
-    counterBuild: true,
-    urgencyMultiplier: 1,
+    buildSpeed: 35,           // 1.75 seconds between builds
+    upgradeSpeed: 999999,     // no upgrades — army mass wins over upgrades
+    upgradeThreshold: 99,
+    nukeMinTime: 4.0,
+    laneIQ: 'basic',
+    counterBuild: false,
+    useValueFunction: false,
+    useDynamicShift: false,
+    useSmartUpgrades: false,
     useNightmareProfiles: false,
+    mistakeRate: 0.03,
+    maxSpawners: 5,           // moderate cap: 5 spawners
+    maxHuts: 4,               // moderate cap: 4 huts
   },
+  // Hard: higher caps, fast builds, no upgrades, nukes
   [BotDifficultyLevel.Hard]: {
-    buildSpeed: 25,
-    upgradeSpeed: 40,
-    upgradeThreshold: 3,
+    buildSpeed: 25,           // 1.25 seconds between builds
+    upgradeSpeed: 999999,     // no upgrades — pure army advantage
+    upgradeThreshold: 99,
+    nukeMinTime: 2.0,
+    laneIQ: 'threat',
+    counterBuild: false,
+    useValueFunction: false,
+    useDynamicShift: false,
+    useSmartUpgrades: false,
+    useNightmareProfiles: false,
+    mistakeRate: 0,
+    maxSpawners: 8,           // high cap: 8 spawners
+    maxHuts: 6,               // high cap: 6 huts
+  },
+  // Nightmare: unlimited, fastest builds, optimized profiles, upgrades as polish
+  [BotDifficultyLevel.Nightmare]: {
+    buildSpeed: 15,           // 0.75 seconds between builds
+    upgradeSpeed: 60,         // upgrades only after huge army (threshold 8)
+    upgradeThreshold: 8,      // 8 spawners before any upgrades
     nukeMinTime: 1.0,
     laneIQ: 'threat',
-    counterBuild: true,
-    urgencyMultiplier: 1.5,
-    useNightmareProfiles: false,
-  },
-  [BotDifficultyLevel.Nightmare]: {
-    buildSpeed: 15,
-    upgradeSpeed: 25,
-    upgradeThreshold: 2,
-    nukeMinTime: 0.5,
-    laneIQ: 'threat',
-    counterBuild: true,
-    urgencyMultiplier: 2,
+    counterBuild: false,
+    useValueFunction: false,
+    useDynamicShift: false,
+    useSmartUpgrades: false,
     useNightmareProfiles: true,
+    mistakeRate: 0,
+    maxSpawners: 99,          // unlimited
+    maxHuts: 99,              // unlimited
   },
 };
 
@@ -330,15 +365,655 @@ export interface BotContext {
   lastChatTick: Record<number, number>;
   currentLane: Record<number, Lane>;
   lastPushTick: Record<number, number>;
-  // Track last action ticks for staggered decisions
+  // Track last action ticks for decisions
   lastBuildTick: Record<number, number>;
   lastUpgradeTick: Record<number, number>;
   lastHarvesterTick: Record<number, number>;
+  lastLaneTick: Record<number, number>;
   // Nuke coordination: tick when bot declared "Nuking Now!", 0 = none
   nukeIntentTick: Record<number, number>;
   // Difficulty settings
   difficulty: Record<number, BotDifficulty>;
   defaultDifficulty: BotDifficulty;
+  // Intelligence system
+  intelligence: Record<number, BotIntelligence>;
+}
+
+// ==================== BOT INTELLIGENCE SYSTEM ====================
+
+/** Per-category combat performance snapshot */
+interface CategoryPerf {
+  alive: number;
+  avgHpPct: number;
+  totalKills: number;
+  buildingCount: number;
+}
+
+/** Forward-looking resource projection */
+interface ResourceProjection {
+  totalGoldNeeded: number;
+  totalWoodNeeded: number;
+  totalStoneNeeded: number;
+  goldIncome: number;
+  woodIncome: number;
+  stoneIncome: number;
+  goldSecsToTarget: number;
+  woodSecsToTarget: number;
+  stoneSecsToTarget: number;
+  bottleneck: HarvesterAssignment;
+  /** Ideal harvester split: [gold, wood, stone, center] */
+  idealSplit: [number, number, number, number];
+}
+
+/** Threat profile of enemy team — drives counter-building and upgrade selection */
+interface ThreatProfile {
+  hasSwarm: boolean;    // Oozlings, Goblins
+  hasTanks: boolean;    // Deep, Tenders, Crown
+  hasBurst: boolean;    // Demon, Horde
+  hasBurn: boolean;     // Demon, Wild, Goblins
+  hasSustain: boolean;  // Geists, Tenders
+  hasControl: boolean;  // Deep, Wild (slow)
+  primaryThreat: 'swarm' | 'tank' | 'burst' | 'burn' | 'sustain' | 'control';
+  // Counter recommendations for upgrade selection
+  wantAoE: boolean;       // vs swarm: splash, multishot, cleave
+  wantBurn: boolean;      // vs tanks/sustain: burn through HP, blight disables regen
+  wantTank: boolean;      // vs burst: survive the alpha strike
+  wantDPS: boolean;       // vs tanks: raw damage to chew through HP
+  wantRange: boolean;     // vs melee-heavy or slow: kite and outrange
+  wantShields: boolean;   // vs burn: shields absorb before HP
+  wantCleanse: boolean;   // vs burn/slow: remove debuffs
+  wantSpeed: boolean;     // vs slow/control: dodge the cc
+}
+
+/** Real-time intelligence state per bot */
+export interface BotIntelligence {
+  // Combat telemetry per unit category
+  myPerf: Record<'melee' | 'ranged' | 'caster', CategoryPerf>;
+  enemyPerf: Record<'melee' | 'ranged' | 'caster', CategoryPerf>;
+
+  // Dynamic build ratio adjustments (-2 to +2 per category)
+  buildShift: { melee: number; ranged: number; caster: number };
+
+  // Threat assessment
+  threats: ThreatProfile;
+
+  // Resource planning
+  resourcePlan: ResourceProjection | null;
+
+  // Strategic state
+  armyAdvantage: number;     // >1 = we outmatch them, <1 = they outmatch us
+  armyValueMy: number;       // total army value (hp * dps)
+  armyValueEnemy: number;
+  gamePhase: 'opening' | 'early' | 'mid' | 'late';
+  strategy: 'rush' | 'balanced' | 'turtle' | 'greed';
+  effectiveCategory: 'melee' | 'ranged' | 'caster' | null; // what's working best
+  weakCategory: 'melee' | 'ranged' | 'caster' | null;      // what's dying fastest
+
+  // Enemy scouting
+  enemyBuildingCounts: { melee: number; ranged: number; caster: number; tower: number; hut: number };
+  enemyAvgUpgradeTier: number;
+
+  // Analysis timing
+  lastAnalysisTick: number;
+  lastResourcePlanTick: number;
+
+  // Death tracking between snapshots
+  prevMyUnitIds: Set<number>;
+  categoryDeaths: Record<'melee' | 'ranged' | 'caster', number>;
+  categorySpawned: Record<'melee' | 'ranged' | 'caster', number>;
+}
+
+function emptyPerf(): Record<'melee' | 'ranged' | 'caster', CategoryPerf> {
+  return {
+    melee: { alive: 0, avgHpPct: 1, totalKills: 0, buildingCount: 0 },
+    ranged: { alive: 0, avgHpPct: 1, totalKills: 0, buildingCount: 0 },
+    caster: { alive: 0, avgHpPct: 1, totalKills: 0, buildingCount: 0 },
+  };
+}
+
+function createBotIntelligence(enemyRaces: Race[]): BotIntelligence {
+  return {
+    myPerf: emptyPerf(),
+    enemyPerf: emptyPerf(),
+    buildShift: { melee: 0, ranged: 0, caster: 0 },
+    threats: assessThreatProfile(enemyRaces),
+    resourcePlan: null,
+    armyAdvantage: 1,
+    armyValueMy: 0,
+    armyValueEnemy: 0,
+    gamePhase: 'opening',
+    strategy: 'balanced',
+    effectiveCategory: null,
+    weakCategory: null,
+    enemyBuildingCounts: { melee: 0, ranged: 0, caster: 0, tower: 0, hut: 0 },
+    enemyAvgUpgradeTier: 0,
+    lastAnalysisTick: 0,
+    lastResourcePlanTick: 0,
+    prevMyUnitIds: new Set(),
+    categoryDeaths: { melee: 0, ranged: 0, caster: 0 },
+    categorySpawned: { melee: 0, ranged: 0, caster: 0 },
+  };
+}
+
+// --- Passive income rates per race (per second) ---
+const PASSIVE_RATES: Record<Race, { gold: number; wood: number; stone: number }> = {
+  [Race.Crown]:    { gold: 1,   wood: 0.1, stone: 0 },
+  [Race.Horde]:    { gold: 1,   wood: 0,   stone: 0.1 },
+  [Race.Goblins]:  { gold: 1,   wood: 0.1, stone: 0 },
+  [Race.Oozlings]: { gold: 1,   wood: 0,   stone: 0.1 },
+  [Race.Demon]:    { gold: 0,   wood: 0.1, stone: 1 },
+  [Race.Deep]:     { gold: 0.1, wood: 1,   stone: 0 },
+  [Race.Wild]:     { gold: 0,   wood: 1,   stone: 0.1 },
+  [Race.Geists]:   { gold: 0.1, wood: 0,   stone: 1 },
+  [Race.Tenders]:  { gold: 0.1, wood: 1,   stone: 0 },
+};
+
+// --- Race threat classifications ---
+const RACE_TRAITS: Record<Race, { archetype: string[]; appliesBurn: boolean; appliesSlow: boolean }> = {
+  [Race.Crown]:    { archetype: ['tank', 'balanced'], appliesBurn: false, appliesSlow: false },
+  [Race.Horde]:    { archetype: ['burst', 'tank'],    appliesBurn: false, appliesSlow: false },
+  [Race.Goblins]:  { archetype: ['swarm', 'burn'],    appliesBurn: true,  appliesSlow: true },
+  [Race.Oozlings]: { archetype: ['swarm'],            appliesBurn: false, appliesSlow: false },
+  [Race.Demon]:    { archetype: ['burst', 'burn'],    appliesBurn: true,  appliesSlow: false },
+  [Race.Deep]:     { archetype: ['tank', 'control'],  appliesBurn: false, appliesSlow: true },
+  [Race.Wild]:     { archetype: ['burn', 'burst'],    appliesBurn: true,  appliesSlow: true },
+  [Race.Geists]:   { archetype: ['sustain'],          appliesBurn: true,  appliesSlow: false },
+  [Race.Tenders]:  { archetype: ['sustain', 'tank'],  appliesBurn: false, appliesSlow: true },
+};
+
+function assessThreatProfile(enemyRaces: Race[]): ThreatProfile {
+  const traits = enemyRaces.map(r => RACE_TRAITS[r]);
+  const archetypes = traits.flatMap(t => t.archetype);
+
+  const hasSwarm = archetypes.includes('swarm');
+  const hasTanks = archetypes.includes('tank');
+  const hasBurst = archetypes.includes('burst');
+  const hasBurn = traits.some(t => t.appliesBurn);
+  const hasSustain = archetypes.includes('sustain');
+  const hasControl = archetypes.includes('control');
+
+  // Determine primary threat — what's most dangerous?
+  // Priority: burn (blight disables regen) > burst > swarm > tank > sustain > control
+  let primaryThreat: ThreatProfile['primaryThreat'] = 'tank';
+  if (hasControl) primaryThreat = 'control';
+  if (hasSustain) primaryThreat = 'sustain';
+  if (hasTanks) primaryThreat = 'tank';
+  if (hasSwarm) primaryThreat = 'swarm';
+  if (hasBurst) primaryThreat = 'burst';
+  if (hasBurn) primaryThreat = 'burn';
+
+  return {
+    hasSwarm, hasTanks, hasBurst, hasBurn, hasSustain, hasControl,
+    primaryThreat,
+    wantAoE: hasSwarm,
+    wantBurn: hasTanks || hasSustain,        // burn through regen/HP, blight disables regen
+    wantTank: hasBurst || hasBurn,           // survive alpha strikes and DoT
+    wantDPS: hasTanks,                       // need raw damage vs high HP
+    wantRange: hasControl || hasTanks,       // kite slow/tanky units
+    wantShields: hasBurn || hasBurst,        // absorb burst and DoT
+    wantCleanse: hasBurn || hasControl,      // remove burn/slow stacks
+    wantSpeed: hasControl,                   // dodge slow/CC
+  };
+}
+
+// ==================== INTELLIGENCE ANALYSIS ====================
+
+/** Runs every ~2 seconds. Updates combat telemetry, army assessment, game phase, strategy. */
+function botUpdateIntelligence(
+  state: GameState, ctx: BotContext, playerId: number,
+): void {
+  const myTeam = botTeam(playerId, state);
+  const intel = ctx.intelligence[playerId];
+  const gameMinutes = state.tick / (20 * 60);
+
+  // --- Game phase ---
+  if (gameMinutes < 0.5) intel.gamePhase = 'opening';
+  else if (gameMinutes < 2) intel.gamePhase = 'early';
+  else if (gameMinutes < 5) intel.gamePhase = 'mid';
+  else intel.gamePhase = 'late';
+
+  // --- Combat telemetry: scan all units ---
+  const myPerf = emptyPerf();
+  const enemyPerf = emptyPerf();
+  const currentMyIds = new Set<number>();
+
+  for (const u of state.units) {
+    const cat = u.category as 'melee' | 'ranged' | 'caster';
+    if (u.team === myTeam) {
+      const p = myPerf[cat];
+      p.alive++;
+      p.avgHpPct += u.hp / u.maxHp;
+      p.totalKills += u.kills;
+      currentMyIds.add(u.id);
+    } else {
+      const p = enemyPerf[cat];
+      p.alive++;
+      p.avgHpPct += u.hp / u.maxHp;
+      p.totalKills += u.kills;
+    }
+  }
+
+  // Finalize averages
+  for (const cat of ['melee', 'ranged', 'caster'] as const) {
+    if (myPerf[cat].alive > 0) myPerf[cat].avgHpPct /= myPerf[cat].alive;
+    else myPerf[cat].avgHpPct = 0;
+    if (enemyPerf[cat].alive > 0) enemyPerf[cat].avgHpPct /= enemyPerf[cat].alive;
+    else enemyPerf[cat].avgHpPct = 0;
+  }
+
+  // Track deaths: units that were in prevMyUnitIds but no longer exist
+  if (intel.prevMyUnitIds.size > 0) {
+    for (const id of intel.prevMyUnitIds) {
+      if (!currentMyIds.has(id)) {
+        // Unit died — find its category from recent memory
+        // We can't look it up anymore, but we can infer from building counts
+        // This is imperfect — better to track unit IDs with categories
+        // For now, distribute deaths proportionally
+        const totalAlive = myPerf.melee.alive + myPerf.ranged.alive + myPerf.caster.alive;
+        if (totalAlive > 0) {
+          // Weight toward categories with fewer alive (they're the ones dying)
+          if (myPerf.melee.avgHpPct <= myPerf.ranged.avgHpPct && myPerf.melee.avgHpPct <= myPerf.caster.avgHpPct) {
+            intel.categoryDeaths.melee++;
+          } else if (myPerf.ranged.avgHpPct <= myPerf.caster.avgHpPct) {
+            intel.categoryDeaths.ranged++;
+          } else {
+            intel.categoryDeaths.caster++;
+          }
+        }
+      }
+    }
+  }
+  intel.prevMyUnitIds = currentMyIds;
+
+  // Building counts for my side
+  const myBuildings = state.buildings.filter(b => b.playerId === playerId);
+  myPerf.melee.buildingCount = myBuildings.filter(b => b.type === BuildingType.MeleeSpawner).length;
+  myPerf.ranged.buildingCount = myBuildings.filter(b => b.type === BuildingType.RangedSpawner).length;
+  myPerf.caster.buildingCount = myBuildings.filter(b => b.type === BuildingType.CasterSpawner).length;
+
+  // Enemy building scouting
+  const enemyTeam = botEnemyTeam(playerId, state);
+  const enemyBuildings = state.buildings.filter(b => botTeam(b.playerId, state) === enemyTeam);
+  intel.enemyBuildingCounts = {
+    melee: enemyBuildings.filter(b => b.type === BuildingType.MeleeSpawner).length,
+    ranged: enemyBuildings.filter(b => b.type === BuildingType.RangedSpawner).length,
+    caster: enemyBuildings.filter(b => b.type === BuildingType.CasterSpawner).length,
+    tower: enemyBuildings.filter(b => b.type === BuildingType.Tower).length,
+    hut: enemyBuildings.filter(b => b.type === BuildingType.HarvesterHut).length,
+  };
+  const upgTiers = enemyBuildings
+    .filter(b => b.type !== BuildingType.HarvesterHut)
+    .map(b => Math.max(0, b.upgradePath.length - 1));
+  intel.enemyAvgUpgradeTier = upgTiers.length > 0 ? upgTiers.reduce((a, b) => a + b, 0) / upgTiers.length : 0;
+
+  intel.myPerf = myPerf;
+  intel.enemyPerf = enemyPerf;
+
+  // --- Army advantage ---
+  // Army value = sum of (hp * dps) for all units, where dps = damage / attackSpeed
+  let myValue = 0, enemyValue = 0;
+  for (const u of state.units) {
+    const dps = u.damage / Math.max(0.5, u.attackSpeed);
+    const value = u.hp * dps;
+    if (u.team === myTeam) myValue += value;
+    else enemyValue += value;
+  }
+  intel.armyValueMy = myValue;
+  intel.armyValueEnemy = enemyValue;
+  intel.armyAdvantage = enemyValue > 0 ? myValue / enemyValue : (myValue > 0 ? 5 : 1);
+
+  // --- Determine what's working and what's failing ---
+  // Effectiveness = kills per building (higher = more productive)
+  const effectiveness: Record<string, number> = {};
+  for (const cat of ['melee', 'ranged', 'caster'] as const) {
+    const bc = myPerf[cat].buildingCount;
+    if (bc > 0) {
+      effectiveness[cat] = myPerf[cat].totalKills / bc;
+    } else {
+      effectiveness[cat] = 0;
+    }
+  }
+
+  // Best performing category
+  let bestCat: 'melee' | 'ranged' | 'caster' | null = null;
+  let bestEff = 0;
+  let worstCat: 'melee' | 'ranged' | 'caster' | null = null;
+  let worstHp = 2;
+  for (const cat of ['melee', 'ranged', 'caster'] as const) {
+    if (myPerf[cat].buildingCount > 0) {
+      if (effectiveness[cat] > bestEff) { bestEff = effectiveness[cat]; bestCat = cat; }
+      if (myPerf[cat].avgHpPct < worstHp && myPerf[cat].alive > 0) {
+        worstHp = myPerf[cat].avgHpPct; worstCat = cat;
+      }
+    }
+  }
+  intel.effectiveCategory = bestCat;
+  intel.weakCategory = worstCat;
+
+  // --- Dynamic build shift ---
+  // Positive = build more, Negative = build fewer
+  const shift = { melee: 0, ranged: 0, caster: 0 };
+
+  if (gameMinutes > 1.5) {
+    // If a category is dying fast (low avgHpPct), reduce it OR boost support
+    if (worstCat === 'melee' && myPerf.melee.avgHpPct < 0.4) {
+      // Melee dying → need more ranged to soften enemies, or more casters for support
+      shift.ranged += 1;
+      shift.caster += 1;
+    }
+    if (worstCat === 'ranged' && myPerf.ranged.avgHpPct < 0.4) {
+      // Ranged dying → enemy is reaching backline, need more melee/towers
+      shift.melee += 1;
+    }
+
+    // If a category is very effective, double down
+    if (bestCat && effectiveness[bestCat] > 3) {
+      shift[bestCat] += 1;
+    }
+
+    // Counter enemy composition
+    const ec = intel.enemyBuildingCounts;
+    const enemyTotal = ec.melee + ec.ranged + ec.caster;
+    if (enemyTotal > 0) {
+      // Enemy is melee-heavy → ranged is strong
+      if (ec.melee / enemyTotal > 0.5) shift.ranged += 1;
+      // Enemy is ranged-heavy → melee to rush or towers to tank
+      if (ec.ranged / enemyTotal > 0.5) shift.melee += 1;
+      // Enemy has lots of towers → don't feed units into them, go ranged/caster
+      if (ec.tower >= 3) { shift.ranged += 1; shift.melee -= 1; }
+    }
+
+    // If losing badly, prioritize what's working and add towers (handled in build order)
+    if (intel.armyAdvantage < 0.5) {
+      if (bestCat) shift[bestCat] += 1;
+    }
+  }
+
+  // Clamp shifts to [-2, +2]
+  for (const cat of ['melee', 'ranged', 'caster'] as const) {
+    shift[cat] = Math.max(-2, Math.min(2, shift[cat]));
+  }
+  intel.buildShift = shift;
+
+  // --- Strategy selection ---
+  const race = state.players[playerId].race;
+  const myHqHp = state.hqHp[myTeam];
+
+  if (intel.gamePhase === 'opening') {
+    // Opening: follow race profile
+    const rushRaces = new Set([Race.Horde, Race.Demon, Race.Goblins, Race.Oozlings]);
+    intel.strategy = rushRaces.has(race) ? 'rush' : 'balanced';
+  } else if (myHqHp < HQ_HP * 0.4) {
+    // Desperate: turtle up
+    intel.strategy = 'turtle';
+  } else if (intel.armyAdvantage > 1.5) {
+    // Winning: press advantage
+    intel.strategy = 'rush';
+  } else if (intel.armyAdvantage < 0.6) {
+    // Losing: play safe, build economy
+    const lateRaces = new Set([Race.Deep, Race.Tenders, Race.Crown]);
+    intel.strategy = lateRaces.has(race) ? 'turtle' : 'balanced';
+  } else {
+    // Even: build economy for advantage
+    const greedyRaces = new Set([Race.Deep, Race.Tenders, Race.Crown]);
+    intel.strategy = greedyRaces.has(race) ? 'greed' : 'balanced';
+  }
+
+  intel.lastAnalysisTick = state.tick;
+}
+
+// ==================== FORWARD-LOOKING RESOURCE PLANNING ====================
+
+/** Build a shopping list of upcoming purchases and project resource needs vs income. */
+function botPlanResources(
+  state: GameState, playerId: number, profile: RaceProfile,
+  myBuildings: GameState['buildings'], gameMinutes: number,
+  intel: BotIntelligence,
+): ResourceProjection {
+  const player = state.players[playerId];
+  const race = player.race;
+  const costs = RACE_BUILDING_COSTS[race];
+  const upgCosts = RACE_UPGRADE_COSTS[race];
+
+  const meleeCount = myBuildings.filter(b => b.type === BuildingType.MeleeSpawner).length;
+  const rangedCount = myBuildings.filter(b => b.type === BuildingType.RangedSpawner).length;
+  const casterCount = myBuildings.filter(b => b.type === BuildingType.CasterSpawner).length;
+  const hutCount = myBuildings.filter(b => b.type === BuildingType.HarvesterHut).length;
+  const towerCount = myBuildings.filter(b => b.type === BuildingType.Tower).length;
+
+  // --- Build shopping list: next 3-4 purchases ---
+  const list: { gold: number; wood: number; stone: number }[] = [];
+
+  // Determine phase-appropriate targets (with build shift applied)
+  let meleeTarget: number, rangedTarget: number, casterTarget: number, hutTarget: number;
+  if (gameMinutes < 1.5) {
+    meleeTarget = profile.earlyMelee;
+    rangedTarget = profile.earlyRanged;
+    casterTarget = 0;
+    hutTarget = profile.earlyHuts;
+  } else if (gameMinutes < 5) {
+    meleeTarget = profile.midMelee + intel.buildShift.melee;
+    rangedTarget = profile.midRanged + intel.buildShift.ranged;
+    casterTarget = profile.midCasters + intel.buildShift.caster;
+    hutTarget = profile.midHuts;
+  } else {
+    meleeTarget = profile.midMelee + 1 + intel.buildShift.melee;
+    rangedTarget = profile.midRanged + 1 + intel.buildShift.ranged;
+    casterTarget = profile.midCasters + 1 + intel.buildShift.caster;
+    hutTarget = profile.maxHuts;
+  }
+
+  // Clamp targets to at least 0
+  meleeTarget = Math.max(0, meleeTarget);
+  rangedTarget = Math.max(0, rangedTarget);
+  casterTarget = Math.max(0, casterTarget);
+
+  // Queue buildings we still need (in priority order)
+  if (meleeCount < meleeTarget) list.push(costs[BuildingType.MeleeSpawner]);
+  if (rangedCount < rangedTarget) list.push(costs[BuildingType.RangedSpawner]);
+  if (casterCount < casterTarget) list.push(costs[BuildingType.CasterSpawner]);
+  if (hutCount < hutTarget && hutCount < profile.maxHuts) {
+    const mult = Math.pow(1.35, Math.max(0, hutCount));
+    const hutCost = costs[BuildingType.HarvesterHut];
+    list.push({
+      gold: Math.floor(hutCost.gold * mult),
+      wood: Math.floor(hutCost.wood * mult),
+      stone: Math.floor(hutCost.stone * mult),
+    });
+  }
+
+  // Queue upgrade costs for next 1-2 upgradeable buildings
+  const upgradeable = myBuildings
+    .filter(b => b.type !== BuildingType.HarvesterHut && b.upgradePath.length > 0 && b.upgradePath.length < 3);
+  for (let i = 0; i < Math.min(2, upgradeable.length); i++) {
+    const tier = upgradeable[i].upgradePath.length === 1 ? upgCosts.tier1 : upgCosts.tier2;
+    list.push(tier);
+  }
+
+  // Tower if strategy calls for it
+  if (intel.strategy === 'turtle' && towerCount < profile.lateTowers) {
+    list.push(costs[BuildingType.Tower]);
+  }
+
+  // Sum next 3-4 items on list
+  let totalGold = 0, totalWood = 0, totalStone = 0;
+  const lookahead = Math.min(4, list.length);
+  for (let i = 0; i < lookahead; i++) {
+    totalGold += list[i].gold;
+    totalWood += list[i].wood;
+    totalStone += list[i].stone;
+  }
+
+  // Deficits (what we need minus what we have)
+  const goldNeeded = Math.max(0, totalGold - player.gold);
+  const woodNeeded = Math.max(0, totalWood - player.wood);
+  const stoneNeeded = Math.max(0, totalStone - player.stone);
+
+  // --- Estimate income ---
+  const passive = PASSIVE_RATES[race];
+  const HARVESTER_RATE = 1.6; // ~8 resources per trip, ~5s round trip
+  const harvesters = state.harvesters.filter(h => h.playerId === playerId);
+  let goldH = 0, woodH = 0, stoneH = 0;
+  for (const h of harvesters) {
+    if (h.assignment === HarvesterAssignment.BaseGold || h.assignment === HarvesterAssignment.Center) goldH++;
+    else if (h.assignment === HarvesterAssignment.Wood) woodH++;
+    else stoneH++;
+  }
+
+  const goldIncome = passive.gold + goldH * HARVESTER_RATE;
+  const woodIncome = passive.wood + woodH * HARVESTER_RATE;
+  const stoneIncome = passive.stone + stoneH * HARVESTER_RATE;
+
+  // Time to afford each resource
+  const goldSecs = goldIncome > 0.01 ? goldNeeded / goldIncome : (goldNeeded > 0 ? 999 : 0);
+  const woodSecs = woodIncome > 0.01 ? woodNeeded / woodIncome : (woodNeeded > 0 ? 999 : 0);
+  const stoneSecs = stoneIncome > 0.01 ? stoneNeeded / stoneIncome : (stoneNeeded > 0 ? 999 : 0);
+
+  // Bottleneck = resource with longest time-to-afford
+  let bottleneck = HarvesterAssignment.BaseGold;
+  let maxTime = goldSecs;
+  if (woodSecs > maxTime) { bottleneck = HarvesterAssignment.Wood; maxTime = woodSecs; }
+  if (stoneSecs > maxTime) { bottleneck = HarvesterAssignment.Stone; maxTime = stoneSecs; }
+
+  // --- Calculate ideal harvester split ---
+  // Distribute harvesters proportional to resource deficit, not current stockpiles
+  const totalDeficit = goldNeeded + woodNeeded + stoneNeeded;
+  const totalHarvesters = harvesters.length;
+  let idealGold = 0, idealWood = 0, idealStone = 0, idealCenter = 0;
+
+  if (totalDeficit > 0 && totalHarvesters > 0) {
+    const goldPct = goldNeeded / totalDeficit;
+    const woodPct = woodNeeded / totalDeficit;
+    const stonePct = stoneNeeded / totalDeficit;
+
+    // Assign harvesters proportionally, minimum 1 per needed resource
+    idealGold = Math.max(goldNeeded > 10 ? 1 : 0, Math.round(goldPct * totalHarvesters));
+    idealWood = Math.max(woodNeeded > 10 ? 1 : 0, Math.round(woodPct * totalHarvesters));
+    idealStone = Math.max(stoneNeeded > 10 ? 1 : 0, Math.round(stonePct * totalHarvesters));
+
+    // If race likes diamond and game is late enough, dedicate 1 to center
+    if (RACE_LIKES_DIAMOND[race] && gameMinutes > 3 && totalHarvesters >= 3) {
+      idealCenter = 1;
+    }
+
+    // Normalize to total harvesters
+    const total = idealGold + idealWood + idealStone + idealCenter;
+    if (total > totalHarvesters) {
+      // Scale down proportionally, keep center if assigned
+      const scale = (totalHarvesters - idealCenter) / Math.max(1, idealGold + idealWood + idealStone);
+      idealGold = Math.round(idealGold * scale);
+      idealWood = Math.round(idealWood * scale);
+      idealStone = totalHarvesters - idealGold - idealWood - idealCenter;
+    } else if (total < totalHarvesters) {
+      // Extra harvesters go to bottleneck
+      const extra = totalHarvesters - total;
+      if (bottleneck === HarvesterAssignment.Wood) idealWood += extra;
+      else if (bottleneck === HarvesterAssignment.Stone) idealStone += extra;
+      else idealGold += extra;
+    }
+  } else if (totalHarvesters > 0) {
+    // No deficit — distribute based on what race needs most (from building costs)
+    const totalCosts = costs[BuildingType.MeleeSpawner];
+    const costTotal = totalCosts.gold + totalCosts.wood + totalCosts.stone;
+    if (costTotal > 0) {
+      idealGold = Math.max(1, Math.round((totalCosts.gold / costTotal) * totalHarvesters));
+      idealWood = Math.max(totalCosts.wood > 0 ? 1 : 0, Math.round((totalCosts.wood / costTotal) * totalHarvesters));
+      idealStone = totalHarvesters - idealGold - idealWood;
+    } else {
+      idealGold = totalHarvesters;
+    }
+  }
+
+  return {
+    totalGoldNeeded: totalGold, totalWoodNeeded: totalWood, totalStoneNeeded: totalStone,
+    goldIncome, woodIncome, stoneIncome,
+    goldSecsToTarget: goldSecs, woodSecsToTarget: woodSecs, stoneSecsToTarget: stoneSecs,
+    bottleneck,
+    idealSplit: [idealGold, idealWood, idealStone, idealCenter],
+  };
+}
+
+// ==================== UPGRADE INTELLIGENCE ====================
+
+/** Score an upgrade node based on how well its mechanics counter the enemy. */
+function scoreUpgradeNode(
+  race: Race, buildingType: BuildingType, node: string, threats: ThreatProfile,
+): number {
+  const tree = UPGRADE_TREES[race]?.[buildingType];
+  if (!tree) return 0;
+  const nodeDef = tree[node as keyof typeof tree] as UpgradeNodeDef | undefined;
+  if (!nodeDef) return 0;
+
+  let score = 5; // base score — all upgrades have some value
+  const s = nodeDef.special;
+
+  // Raw stat multipliers always have value
+  if (nodeDef.hpMult) score += (nodeDef.hpMult - 1) * 10;
+  if (nodeDef.damageMult) score += (nodeDef.damageMult - 1) * 10;
+  if (nodeDef.attackSpeedMult && nodeDef.attackSpeedMult < 1) score += (1 - nodeDef.attackSpeedMult) * 15;
+  if (nodeDef.moveSpeedMult) score += (nodeDef.moveSpeedMult - 1) * 5;
+  if (nodeDef.rangeMult) score += (nodeDef.rangeMult - 1) * 8;
+
+  if (!s) return score;
+
+  // Score specials based on what we WANT vs enemy composition
+  // AoE mechanics are gold vs swarm
+  if (threats.wantAoE) {
+    if (s.splashRadius) score += 8;
+    if (s.multishotCount) score += 6 * s.multishotCount;
+    if (s.cleaveTargets) score += 7 * s.cleaveTargets;
+    if (s.aoeRadiusBonus) score += 5;
+    if (s.extraChainTargets) score += 5 * s.extraChainTargets;
+  }
+
+  // Burn is excellent vs tanks and sustain (blight disables regen)
+  if (threats.wantBurn) {
+    if (s.extraBurnStacks) score += 6 * s.extraBurnStacks;
+  }
+
+  // Tankiness vs burst and burn
+  if (threats.wantTank) {
+    if (s.damageReductionPct) score += s.damageReductionPct * 30;
+    if (s.regenPerSec) score += s.regenPerSec * 3;
+    if (s.reviveHpPct) score += 8;
+    if (s.dodgeChance) score += s.dodgeChance * 20;
+  }
+
+  // DPS vs tanks
+  if (threats.wantDPS) {
+    if (s.knockbackEveryN) score += 3; // disruption has value
+    if (s.guaranteedHaste) score += 4;
+  }
+
+  // Range vs control/tanks
+  if (threats.wantRange) {
+    if (s.towerRangeBonus) score += s.towerRangeBonus * 3;
+  }
+
+  // Shields vs burn/burst
+  if (threats.wantShields) {
+    if (s.shieldTargetBonus) score += 5 * s.shieldTargetBonus;
+    if (s.shieldAbsorbBonus) score += 3;
+  }
+
+  // Cleanse vs burn/slow
+  if (threats.wantCleanse) {
+    if (s.healBonus) score += s.healBonus * 2;
+  }
+
+  // Speed vs slow/control
+  if (threats.wantSpeed) {
+    if (s.guaranteedHaste) score += 6;
+    if (s.hopAttack) score += 5; // leap past slow zones
+  }
+
+  // Slow is always valuable for control (extra slow stacks)
+  if (s.extraSlowStacks) score += 3 * s.extraSlowStacks;
+
+  // Lifesteal / heal is always decent
+  if (s.healBonus) score += 2;
+
+  return score;
 }
 
 export function createBotContext(
@@ -347,9 +1022,10 @@ export function createBotContext(
   return {
     lastChatTick: {}, currentLane: {}, lastPushTick: {},
     lastBuildTick: {}, lastUpgradeTick: {}, lastHarvesterTick: {},
-    nukeIntentTick: {},
+    lastLaneTick: {}, nukeIntentTick: {},
     difficulty: {},
     defaultDifficulty: BOT_DIFFICULTY_PRESETS[difficulty],
+    intelligence: {},
   };
 }
 
@@ -360,7 +1036,7 @@ const TANK_RACES: ReadonlySet<Race> = new Set([Race.Deep, Race.Tenders, Race.Cro
 const GLASS_CANNON_RACES: ReadonlySet<Race> = new Set([Race.Demon, Race.Wild]);
 
 function getEnemyRaces(state: GameState, playerId: number): Race[] {
-  const myTeam = botTeam(playerId);
+  const myTeam = botTeam(playerId, state);
   return state.players
     .filter(p => p.team !== myTeam)
     .map(p => p.race);
@@ -372,12 +1048,17 @@ function enemyHasArchetype(enemyRaces: Race[], archetype: ReadonlySet<Race>): bo
 
 // --- Helpers ---
 
-function botTeam(playerId: number): Team {
+function botTeam(playerId: number, state?: GameState): Team {
+  if (state?.mapDef) {
+    const slot = state.mapDef.playerSlots[playerId];
+    if (slot) return slot.teamIndex as Team;
+  }
   return playerId < 2 ? Team.Bottom : Team.Top;
 }
 
-function botEnemyTeam(playerId: number): Team {
-  return playerId < 2 ? Team.Top : Team.Bottom;
+function botEnemyTeam(playerId: number, state?: GameState): Team {
+  const myTeam = botTeam(playerId, state);
+  return myTeam === Team.Bottom ? Team.Top : Team.Bottom;
 }
 
 function botCanAfford(state: GameState, playerId: number, type: BuildingType): boolean {
@@ -399,8 +1080,15 @@ function unitStrength(u: GameState['units'][0]): number {
   return (u.hp / u.maxHp) * u.damage + 1;
 }
 
-function getTeammateId(playerId: number): number {
-  return playerId < 2 ? (playerId === 0 ? 1 : 0) : (playerId === 2 ? 3 : 2);
+function getTeammateIds(playerId: number, state?: GameState): number[] {
+  if (state?.mapDef) {
+    const myTeam = botTeam(playerId, state);
+    return state.players
+      .filter(p => p.team === myTeam && p.id !== playerId)
+      .map(p => p.id);
+  }
+  // Legacy 4-player fallback
+  return [playerId < 2 ? (playerId === 0 ? 1 : 0) : (playerId === 2 ? 3 : 2)];
 }
 
 /** Total resource value available to spend */
@@ -438,13 +1126,31 @@ function runSingleBotAI(state: GameState, ctx: BotContext, playerId: number, emi
   const enemyRaces = getEnemyRaces(state, playerId);
 
   const gameMinutes = state.tick / (20 * 60);
-  const myTeam = botTeam(playerId);
+  const myTeam = botTeam(playerId, state);
   const myHqHp = state.hqHp[myTeam];
-  const enemyHqHp = state.hqHp[botEnemyTeam(playerId)];
+  const enemyHqHp = state.hqHp[botEnemyTeam(playerId, state)];
 
-  // Urgency: faster decisions when losing or late game, scaled by difficulty
-  const rawUrgency = myHqHp < HQ_HP * 0.4 ? 2 : gameMinutes > 5 ? 1.5 : 1;
-  const urgency = 1 + (rawUrgency - 1) * diff.urgencyMultiplier;
+  // --- Intelligence system: initialize and update ---
+  if (!ctx.intelligence[playerId]) {
+    ctx.intelligence[playerId] = createBotIntelligence(enemyRaces);
+  }
+  const intel = ctx.intelligence[playerId];
+
+  // Run analysis every ~2 seconds (40 ticks) — no per-player stagger to avoid asymmetry
+  const analysisInterval = 40;
+  if (state.tick - intel.lastAnalysisTick >= analysisInterval) {
+    botUpdateIntelligence(state, ctx, playerId);
+  }
+
+  // Update resource plan every ~3 seconds (60 ticks)
+  const resourcePlanInterval = 60;
+  if (state.tick - intel.lastResourcePlanTick >= resourcePlanInterval) {
+    intel.resourcePlan = botPlanResources(state, playerId, profile, myBuildings, gameMinutes, intel);
+    intel.lastResourcePlanTick = state.tick;
+  }
+
+  // Urgency: faster decisions when losing or late game
+  const urgency = myHqHp < HQ_HP * 0.4 ? 2 : gameMinutes > 5 ? 1.5 : 1;
 
   // 0. Place free tower immediately if we have none (every tick until placed)
   const totalTowers = towerCount + alleyTowerCount;
@@ -452,17 +1158,33 @@ function runSingleBotAI(state: GameState, ctx: BotContext, playerId: number, emi
     botPlaceAlleyTower(state, playerId, emit);
   }
 
-  // 1. Build order — interval scaled by difficulty
-  const buildInterval = Math.max(15, Math.floor((diff.buildSpeed + playerId * 5) / urgency));
+  // 1. Build order — speed and caps differ by difficulty
+  const buildInterval = Math.max(15, Math.floor(diff.buildSpeed / urgency));
   if (state.tick - (ctx.lastBuildTick[playerId] ?? 0) >= buildInterval) {
     const totalSpawners = meleeCount + rangedCount + casterCount;
+    const atSpawnerCap = totalSpawners >= diff.maxSpawners;
+    const atHutCap = hutCount >= diff.maxHuts;
     let built = false;
-    if (totalSpawners === 0 && gameMinutes > 0.3) {
+
+    // Mistake rate: occasionally skip build decisions entirely
+    if (diff.mistakeRate > 0 && state.rng() < diff.mistakeRate * 0.5) {
+      // Do nothing — simulates inattention
+    } else if (atSpawnerCap && atHutCap) {
+      // At all caps — only towers possible
+      if (towerCount + alleyTowerCount < 3 && botCanAfford(state, playerId, BuildingType.Tower)) {
+        botPlaceBuilding(state, playerId, BuildingType.Tower, myBuildings, emit);
+        built = true;
+      }
+    } else if (totalSpawners === 0 && gameMinutes > 0.3) {
       built = botBuildAffordable(state, playerId, [BuildingType.MeleeSpawner, BuildingType.RangedSpawner, BuildingType.CasterSpawner], myBuildings, emit);
-    } else if (hutCount === 0 && gameMinutes > 0.3 && botCanAffordHut(state, playerId, hutCount)) {
+    } else if (hutCount === 0 && gameMinutes > 0.3 && !atHutCap && botCanAffordHut(state, playerId, hutCount)) {
       emit({ type: 'build_hut', playerId }); built = true;
+    } else if (diff.useValueFunction) {
+      built = botValueBasedBuild(state, ctx, playerId, profile, myBuildings,
+        meleeCount, rangedCount, casterCount, towerCount, alleyTowerCount, hutCount,
+        gameMinutes, enemyRaces, diff, emit);
     } else {
-      built = botDoBuildOrder(state, playerId, profile, myBuildings,
+      built = botDoBuildOrder(state, ctx, playerId, profile, myBuildings,
         meleeCount, rangedCount, casterCount, towerCount, alleyTowerCount, hutCount,
         gameMinutes, enemyRaces, diff, emit);
     }
@@ -470,9 +1192,9 @@ function runSingleBotAI(state: GameState, ctx: BotContext, playerId: number, emi
   }
 
   // 2. Upgrades — gated by difficulty threshold
-  const upgradeInterval = Math.max(20, Math.floor((diff.upgradeSpeed + playerId * 8) / urgency));
+  const upgradeInterval = Math.max(20, Math.floor(diff.upgradeSpeed / urgency));
   if (state.tick - (ctx.lastUpgradeTick[playerId] ?? 0) >= upgradeInterval) {
-    if (botUpgradeBuildings(state, playerId, player.race, profile, myBuildings, enemyRaces, gameMinutes, diff, emit)) {
+    if (botUpgradeBuildings(state, ctx, playerId, player.race, profile, myBuildings, enemyRaces, gameMinutes, diff, emit)) {
       ctx.lastUpgradeTick[playerId] = state.tick;
     }
   }
@@ -483,12 +1205,12 @@ function runSingleBotAI(state: GameState, ctx: BotContext, playerId: number, emi
   // 4. Harvesters — check every ~3 seconds
   const harvInterval = Math.max(40, Math.floor(60 / urgency));
   if (state.tick - (ctx.lastHarvesterTick[playerId] ?? 0) >= harvInterval) {
-    botManageHarvesters(state, playerId, player, myBuildings, gameMinutes, emit);
+    botManageHarvesters(state, ctx, playerId, player, myBuildings, gameMinutes, emit);
     ctx.lastHarvesterTick[playerId] = state.tick;
   }
 
   // 5. Nuke — telegraph with "Nuking Now!" then fire after a half-beat
-  if (state.tick % 20 === playerId * 5) {
+  if (state.tick % 20 === 0) {
     const nukeMinTime = myHqHp < HQ_HP * 0.5 ? Math.min(0.5, diff.nukeMinTime) : diff.nukeMinTime;
     if (player.nukeAvailable && gameMinutes > nukeMinTime) {
       botNukeWithTelegraph(state, ctx, playerId, myTeam, myHqHp, emit);
@@ -518,8 +1240,173 @@ function botBuildAffordable(
   return false;
 }
 
+// ==================== VALUE-BASED BUILD (Oracle) ====================
+
+/**
+ * Value function: computes the expected "power per resource" of each possible action.
+ * The oracle bot always picks the highest-value action it can afford.
+ *
+ * Actions considered:
+ * 1. Build a new spawner → adds DPS/HP stream over time
+ * 2. Upgrade an existing building → multiplies existing stream
+ * 3. Build a hut → adds economic throughput
+ * 4. Build a tower → adds defensive DPS
+ */
+function botValueBasedBuild(
+  state: GameState, ctx: BotContext, playerId: number, profile: RaceProfile,
+  myBuildings: GameState['buildings'],
+  meleeCount: number, rangedCount: number, casterCount: number,
+  towerCount: number, alleyTowerCount: number, hutCount: number,
+  gameMinutes: number, enemyRaces: Race[], diff: BotDifficulty, emit: Emit,
+): boolean {
+  const player = state.players[playerId];
+  const race = player.race;
+  const costs = RACE_BUILDING_COSTS[race];
+  const intel = ctx.intelligence[playerId];
+
+  // Calculate DPS value per spawner type
+  const spawnerValue = (type: BuildingType): number => {
+    const stats = UNIT_STATS[race]?.[type];
+    if (!stats) return 0;
+    const dps = (stats.damage / stats.attackSpeed) * (stats.spawnCount ?? 1);
+    const hp = stats.hp * (stats.spawnCount ?? 1);
+    const cost = costs[type];
+    const totalCost = cost.gold + cost.wood + cost.stone;
+    if (totalCost === 0) return 0;
+    // Value = combat power per resource. hp/10 normalizes HP contribution.
+    return (dps + hp / 10) / totalCost;
+  };
+
+  // Calculate upgrade value: how much does this upgrade multiply existing output?
+  const upgradeValue = (building: GameState['buildings'][0]): { value: number; choice: string } => {
+    const raceCosts = RACE_UPGRADE_COSTS[race];
+    const tier = building.upgradePath.length === 1 ? raceCosts.tier1 : raceCosts.tier2;
+    const totalCost = tier.gold + tier.wood + tier.stone;
+    if (totalCost === 0) return { value: 0, choice: 'B' };
+    if (player.gold < tier.gold || player.wood < tier.wood || player.stone < tier.stone) {
+      return { value: 0, choice: 'B' };
+    }
+
+    const choice = botPickUpgrade(state, ctx, building, profile, race, enemyRaces, diff);
+    const tree = UPGRADE_TREES[race]?.[building.type];
+    if (!tree) return { value: 0, choice };
+    const nodeDef = tree[choice as keyof typeof tree] as UpgradeNodeDef | undefined;
+    if (!nodeDef) return { value: 0, choice };
+
+    // Upgrade value = total multiplier improvement normalized by cost
+    const hpGain = (nodeDef.hpMult ?? 1) - 1;
+    const dmgGain = (nodeDef.damageMult ?? 1) - 1;
+    const spdGain = nodeDef.attackSpeedMult ? (1 - nodeDef.attackSpeedMult) : 0;
+    const specialBonus = nodeDef.special ? 0.15 : 0; // specials have inherent value
+    const totalGain = hpGain * 0.4 + dmgGain * 0.8 + spdGain * 1.0 + specialBonus;
+
+    return { value: totalGain * 10 / totalCost, choice };
+  };
+
+  // Calculate hut value: economic ROI diminished by escalating cost
+  const hutValue = (): number => {
+    if (hutCount >= profile.maxHuts) return 0;
+    if (!botCanAffordHut(state, playerId, hutCount)) return 0;
+    const hutCost = costs[BuildingType.HarvesterHut];
+    const mult = Math.pow(1.35, Math.max(0, hutCount));
+    const totalCost = Math.floor(hutCost.gold * mult) + Math.floor(hutCost.wood * mult) + Math.floor(hutCost.stone * mult);
+    if (totalCost === 0) return 0;
+    // Hut value = income per resource invested, decays with game time (less time to ROI)
+    const timeMultiplier = Math.max(0.2, 1 - gameMinutes / 10);
+    return (1.6 * timeMultiplier) / totalCost * 100;
+  };
+
+  // Score all options
+  interface BuildOption {
+    action: 'spawner' | 'upgrade' | 'hut' | 'tower' | 'alley_tower';
+    value: number;
+    type?: BuildingType;
+    building?: GameState['buildings'][0];
+    upgradeChoice?: string;
+  }
+
+  const options: BuildOption[] = [];
+
+  // Spawner options
+  const spawnerTypes = [BuildingType.MeleeSpawner, BuildingType.RangedSpawner, BuildingType.CasterSpawner];
+  for (const type of spawnerTypes) {
+    if (botCanAfford(state, playerId, type)) {
+      const sv = spawnerValue(type);
+      // Apply dynamic shift bonus
+      const shift = (diff.useDynamicShift && intel?.buildShift) ? intel.buildShift : { melee: 0, ranged: 0, caster: 0 };
+      const cat = type === BuildingType.MeleeSpawner ? 'melee' : type === BuildingType.RangedSpawner ? 'ranged' : 'caster';
+      const shiftBonus = Math.max(0, shift[cat]) * 0.02;
+      options.push({ action: 'spawner', value: sv + shiftBonus, type });
+    }
+  }
+
+  // Upgrade options (only if we have enough spawners)
+  const spawnerCount = meleeCount + rangedCount + casterCount;
+  if (spawnerCount >= diff.upgradeThreshold) {
+    const upgradeable = myBuildings
+      .filter(b => b.type !== BuildingType.HarvesterHut && b.upgradePath.length > 0 && b.upgradePath.length < 3);
+    for (const b of upgradeable) {
+      const uv = upgradeValue(b);
+      if (uv.value > 0) {
+        options.push({ action: 'upgrade', value: uv.value, building: b, upgradeChoice: uv.choice });
+      }
+    }
+  }
+
+  // Hut option
+  const hv = hutValue();
+  if (hv > 0) {
+    options.push({ action: 'hut', value: hv });
+  }
+
+  // Tower options
+  const totalTowers = towerCount + alleyTowerCount;
+  if (totalTowers < profile.lateTowers + profile.alleyTowers && botCanAfford(state, playerId, BuildingType.Tower)) {
+    const towerCost = costs[BuildingType.Tower];
+    const totalCost = towerCost.gold + towerCost.wood + towerCost.stone;
+    const towerVal = totalCost > 0 ? 5 / totalCost : 0;
+    // Towers more valuable when losing
+    const defenseBonus = (intel?.armyAdvantage ?? 1) < 0.7 ? towerVal * 0.5 : 0;
+    if (alleyTowerCount < profile.alleyTowers) {
+      options.push({ action: 'alley_tower', value: towerVal + defenseBonus });
+    } else if (towerCount < profile.lateTowers) {
+      options.push({ action: 'tower', value: towerVal + defenseBonus, type: BuildingType.Tower });
+    }
+  }
+
+  if (options.length === 0) return false;
+
+  // Sort by value, pick best
+  options.sort((a, b) => b.value - a.value);
+
+  // Mistake: occasionally pick 2nd or 3rd best
+  let pick = options[0];
+  if (diff.mistakeRate > 0 && options.length > 1 && state.rng() < diff.mistakeRate) {
+    pick = options[Math.min(1, options.length - 1)];
+  }
+
+  switch (pick.action) {
+    case 'spawner':
+      botPlaceBuilding(state, playerId, pick.type!, myBuildings, emit);
+      return true;
+    case 'upgrade':
+      emit({ type: 'purchase_upgrade', playerId, buildingId: pick.building!.id, choice: pick.upgradeChoice! });
+      return true;
+    case 'hut':
+      emit({ type: 'build_hut', playerId });
+      return true;
+    case 'tower':
+      botPlaceBuilding(state, playerId, BuildingType.Tower, myBuildings, emit);
+      return true;
+    case 'alley_tower':
+      return botPlaceAlleyTower(state, playerId, emit);
+  }
+}
+
+// ==================== PROFILE-BASED BUILD ORDER ====================
+
 function botDoBuildOrder(
-  state: GameState, playerId: number, profile: RaceProfile,
+  state: GameState, ctx: BotContext, playerId: number, profile: RaceProfile,
   myBuildings: GameState['buildings'],
   meleeCount: number, rangedCount: number, casterCount: number,
   towerCount: number, alleyTowerCount: number, hutCount: number,
@@ -529,12 +1416,23 @@ function botDoBuildOrder(
   const vsTank = diff.counterBuild && enemyHasArchetype(enemyRaces, TANK_RACES);
   const vsGlass = diff.counterBuild && enemyHasArchetype(enemyRaces, GLASS_CANNON_RACES);
 
-  const extraCasters = vsSwarm ? profile.vsSwarmExtraCasters : 0;
-  const extraRanged = vsTank ? profile.vsTankExtraRanged : 0;
-  const extraMelee = vsGlass ? profile.vsGlassCannonExtraMelee : 0;
+  // Intelligence-driven build adjustments (layered on top of profile + counter-build)
+  const intel = ctx.intelligence[playerId];
+  const shift = (diff.useDynamicShift && intel?.buildShift) ? intel.buildShift : { melee: 0, ranged: 0, caster: 0 };
+
+  const extraCasters = (vsSwarm ? profile.vsSwarmExtraCasters : 0) + Math.max(0, shift.caster);
+  const extraRanged = (vsTank ? profile.vsTankExtraRanged : 0) + Math.max(0, shift.ranged);
+  const extraMelee = (vsGlass ? profile.vsGlassCannonExtraMelee : 0) + Math.max(0, shift.melee);
 
   // Resource-aware: try multiple options, pick the one we can actually afford
+  const totalSpawnersAll = meleeCount + rangedCount + casterCount;
+  const atSpawnerCap = totalSpawnersAll >= diff.maxSpawners;
+  const atHutCap = hutCount >= diff.maxHuts;
+
   const tryBuild = (type: BuildingType): boolean => {
+    // Enforce spawner cap for spawner types
+    const isSpawner = type === BuildingType.MeleeSpawner || type === BuildingType.RangedSpawner || type === BuildingType.CasterSpawner;
+    if (isSpawner && atSpawnerCap) return false;
     if (botCanAfford(state, playerId, type)) {
       botPlaceBuilding(state, playerId, type, myBuildings, emit);
       return true;
@@ -543,6 +1441,7 @@ function botDoBuildOrder(
   };
 
   const tryHut = (): boolean => {
+    if (atHutCap) return false;
     if (botCanAffordHut(state, playerId, hutCount)) {
       emit({ type: 'build_hut', playerId });
       return true;
@@ -597,14 +1496,36 @@ function botDoBuildOrder(
     if (alleyTowerCount < 1 && botCanAfford(state, playerId, BuildingType.Tower)) {
       if (botPlaceAlleyTower(state, playerId, emit)) return true;
     }
+    // Keep building spawners beyond profile targets if we haven't hit our cap
+    if (!atSpawnerCap) {
+      const preferType = meleeCount <= rangedCount ? BuildingType.MeleeSpawner : BuildingType.RangedSpawner;
+      if (tryBuild(preferType)) return true;
+      const altType = preferType === BuildingType.MeleeSpawner ? BuildingType.RangedSpawner : BuildingType.MeleeSpawner;
+      if (tryBuild(altType)) return true;
+    }
+    // Keep building huts beyond profile targets if we haven't hit our cap
+    if (!atHutCap && tryHut()) return true;
     return false;
   }
 
-  // Late game
-  if (alleyTowerCount < profile.alleyTowers && botCanAfford(state, playerId, BuildingType.Tower)) {
-    if (botPlaceAlleyTower(state, playerId, emit)) return true;
+  // Late game — use intelligence to decide what to build
+  const strategy = intel?.strategy ?? 'balanced';
+
+  // Turtle strategy: prioritize towers
+  if (strategy === 'turtle') {
+    if (alleyTowerCount < profile.alleyTowers + 1 && botCanAfford(state, playerId, BuildingType.Tower)) {
+      if (botPlaceAlleyTower(state, playerId, emit)) return true;
+    }
+    if (towerCount < profile.lateTowers + 1 && tryBuild(BuildingType.Tower)) return true;
+  } else {
+    if (alleyTowerCount < profile.alleyTowers && botCanAfford(state, playerId, BuildingType.Tower)) {
+      if (botPlaceAlleyTower(state, playerId, emit)) return true;
+    }
+    if (towerCount < profile.lateTowers && tryBuild(BuildingType.Tower)) return true;
   }
-  if (towerCount < profile.lateTowers && tryBuild(BuildingType.Tower)) return true;
+
+  // Greed strategy: prioritize economy
+  if (strategy === 'greed' && hutCount < profile.maxHuts && tryHut()) return true;
   if (hutCount < profile.maxHuts && tryHut()) return true;
 
   const totalMilitary = meleeCount + rangedCount + casterCount + towerCount;
@@ -612,9 +1533,17 @@ function botDoBuildOrder(
     const lateCasterTarget = 2 + extraCasters;
     if (casterCount < lateCasterTarget && tryBuild(BuildingType.CasterSpawner)) return true;
 
-    // Pick based on ratio and enemy
+    // Intelligence-driven: build more of what's effective
+    const effective = intel?.effectiveCategory;
     let preferType: BuildingType;
-    if (vsTank && rangedCount <= meleeCount) {
+
+    if (effective === 'melee' && meleeCount <= rangedCount + 2) {
+      preferType = BuildingType.MeleeSpawner;
+    } else if (effective === 'ranged' && rangedCount <= meleeCount + 2) {
+      preferType = BuildingType.RangedSpawner;
+    } else if (effective === 'caster') {
+      preferType = BuildingType.CasterSpawner;
+    } else if (vsTank && rangedCount <= meleeCount) {
       preferType = BuildingType.RangedSpawner;
     } else if (vsGlass && meleeCount <= rangedCount) {
       preferType = BuildingType.MeleeSpawner;
@@ -624,7 +1553,6 @@ function botDoBuildOrder(
     if (tryBuild(preferType)) return true;
     const altType = preferType === BuildingType.MeleeSpawner ? BuildingType.RangedSpawner : BuildingType.MeleeSpawner;
     if (tryBuild(altType)) return true;
-    // If we have resources but can't afford melee/ranged, try caster
     if (totalResources(state, playerId) > 50 && tryBuild(BuildingType.CasterSpawner)) return true;
   }
 
@@ -665,9 +1593,9 @@ function botPlaceBuilding(
 }
 
 function botPlaceAlleyTower(state: GameState, playerId: number, emit: Emit): boolean {
-  const myTeam = botTeam(playerId);
+  const myTeam = botTeam(playerId, state);
   const teamAlleyBuildings = state.buildings.filter(
-    b => b.buildGrid === 'alley' && botTeam(b.playerId) === myTeam
+    b => b.buildGrid === 'alley' && botTeam(b.playerId, state) === myTeam
   );
   const occupied = new Set(teamAlleyBuildings.map(b => `${b.gridX},${b.gridY}`));
   const freeSlots: { gx: number; gy: number }[] = [];
@@ -689,7 +1617,7 @@ function botPlaceAlleyTower(state: GameState, playerId: number, emit: Emit): boo
 // ==================== UPGRADES ====================
 
 function botUpgradeBuildings(
-  state: GameState, playerId: number, race: Race, profile: RaceProfile,
+  state: GameState, ctx: BotContext, playerId: number, race: Race, profile: RaceProfile,
   myBuildings: GameState['buildings'], enemyRaces: Race[],
   gameMinutes: number, diff: BotDifficulty, emit: Emit,
 ): boolean {
@@ -729,22 +1657,39 @@ function botUpgradeBuildings(
     const resAfter = (player.gold - cost.gold) + (player.wood - cost.wood) + (player.stone - cost.stone);
     if (gameMinutes < 3 && resAfter < 30 && spawnerCount < 3) continue;
 
-    const choice = botPickUpgrade(state, b, profile, race, enemyRaces);
+    // Intelligence-driven: prioritize upgrading the most effective unit type
+    const intel = ctx.intelligence[playerId];
+    const effective = intel?.effectiveCategory;
+    const effectiveType =
+      effective === 'melee' ? BuildingType.MeleeSpawner :
+      effective === 'ranged' ? BuildingType.RangedSpawner :
+      effective === 'caster' ? BuildingType.CasterSpawner : null;
+
+    // If this building isn't the effective type and an effective building is available to upgrade, skip
+    if (effectiveType && b.type !== effectiveType && gameMinutes > 3) {
+      const betterTarget = upgradeable.find(ub =>
+        ub.type === effectiveType && ub.upgradePath.length <= b.upgradePath.length
+      );
+      if (betterTarget && betterTarget !== b) continue;
+    }
+
+    const choice = botPickUpgrade(state, ctx, b, profile, race, enemyRaces, diff);
     emit({ type: 'purchase_upgrade', playerId, buildingId: b.id, choice });
     return true;
   }
   return false;
 }
 
+/** Matchup-aware upgrade selection: scores each option by how well it counters the enemy. */
 function botPickUpgrade(
-  state: GameState, building: GameState['buildings'][0], profile: RaceProfile, race: Race,
-  enemyRaces: Race[],
+  state: GameState, ctx: BotContext, building: GameState['buildings'][0], profile: RaceProfile, race: Race,
+  enemyRaces: Race[], diff: BotDifficulty,
 ): string {
-  const deviate = state.rng() < 0.1;
-  const vsTank = enemyHasArchetype(enemyRaces, TANK_RACES);
-  const vsSwarm = enemyHasArchetype(enemyRaces, SWARM_RACES);
+  const intel = ctx.intelligence[building.playerId];
+  const threats = intel?.threats ?? assessThreatProfile(enemyRaces);
 
   if (building.upgradePath.length === 1) {
+    // Tier 1: choose B or C
     let bias: 'B' | 'C';
     switch (building.type) {
       case BuildingType.MeleeSpawner:  bias = profile.meleeUpgradeBias; break;
@@ -753,32 +1698,40 @@ function botPickUpgrade(
       case BuildingType.Tower:         bias = profile.towerUpgradeBias; break;
       default: bias = 'B';
     }
-    if (deviate) bias = bias === 'B' ? 'C' : 'B';
-    return bias;
+
+    if (!diff.useSmartUpgrades) {
+      // Non-smart: just follow race bias with occasional random
+      if (diff.mistakeRate > 0 && state.rng() < diff.mistakeRate) return bias === 'B' ? 'C' : 'B';
+      return bias;
+    }
+
+    const scoreB = scoreUpgradeNode(race, building.type, 'B', threats);
+    const scoreC = scoreUpgradeNode(race, building.type, 'C', threats);
+    const biasBonus = 2;
+    const adjustedB = scoreB + (bias === 'B' ? biasBonus : 0);
+    const adjustedC = scoreC + (bias === 'C' ? biasBonus : 0);
+    if (diff.mistakeRate > 0 && state.rng() < diff.mistakeRate) return state.rng() < 0.5 ? 'B' : 'C';
+    return adjustedB >= adjustedC ? 'B' : 'C';
   }
 
-  // Tier 2
-  if (building.upgradePath[1] === 'B') {
-    let choice: string;
-    if (vsTank) choice = 'E';
-    else if (vsSwarm) choice = 'D';
-    else {
-      const preferOffense = race === Race.Demon || race === Race.Wild || race === Race.Goblins || race === Race.Oozlings;
-      choice = preferOffense ? 'E' : 'D';
-    }
-    if (deviate) choice = choice === 'D' ? 'E' : 'D';
-    return choice;
-  } else {
-    let choice: string;
-    if (vsTank) choice = 'G';
-    else if (vsSwarm) choice = 'F';
-    else {
-      const preferUtility = race === Race.Crown || race === Race.Deep || race === Race.Tenders;
-      choice = preferUtility ? 'F' : 'G';
-    }
-    if (deviate) choice = choice === 'F' ? 'G' : 'F';
-    return choice;
+  // Tier 2: choose D/E (under B) or F/G (under C)
+  const isBranch = building.upgradePath[1] === 'B';
+  const opt1 = isBranch ? 'D' : 'F';
+  const opt2 = isBranch ? 'E' : 'G';
+
+  if (!diff.useSmartUpgrades) {
+    // Non-smart: random choice within branch
+    return state.rng() < 0.5 ? opt1 : opt2;
   }
+
+  const score1 = scoreUpgradeNode(race, building.type, opt1, threats);
+  const score2 = scoreUpgradeNode(race, building.type, opt2, threats);
+  const offenseBonus = (intel?.armyAdvantage ?? 1) > 1.3 ? 2 : 0;
+  const defenseBonus = (intel?.armyAdvantage ?? 1) < 0.7 ? 2 : 0;
+  const adj1 = score1 + defenseBonus;
+  const adj2 = score2 + offenseBonus;
+  if (diff.mistakeRate > 0 && state.rng() < diff.mistakeRate) return state.rng() < 0.5 ? opt1 : opt2;
+  return adj1 >= adj2 ? opt1 : opt2;
 }
 
 // ==================== LANE MANAGEMENT ====================
@@ -788,11 +1741,12 @@ function botEvaluateLanes(
   profile: RaceProfile, myBuildings: GameState['buildings'],
   gameMinutes: number, diff: BotDifficulty, emit: Emit,
 ): void {
-  // Faster lane checks (every ~4-5 seconds, urgency-scaled)
+  // Lane checks every ~4 seconds, urgency-scaled
   const myHqHp = state.hqHp[myTeam];
-  const urgency = myHqHp < HQ_HP * 0.4 ? 2 : 1;
-  const laneInterval = Math.max(40, Math.floor((80 + playerId * 10) / urgency));
-  if (state.tick % laneInterval !== 0) return;
+  const laneUrgency = myHqHp < HQ_HP * 0.4 ? 2 : 1;
+  const laneInterval = Math.max(40, Math.floor(80 / laneUrgency));
+  if (state.tick - (ctx.lastLaneTick[playerId] ?? 0) < laneInterval) return;
+  ctx.lastLaneTick[playerId] = state.tick;
 
   // Random lane IQ: just pick a random lane occasionally
   if (diff.laneIQ === 'random') {
@@ -829,8 +1783,9 @@ function botEvaluateLanes(
   const enemyTotalStr = enemyLeftStr + enemyRightStr;
   const totalMyUnits = myLeftCount + myRightCount;
 
-  const teammateId = getTeammateId(playerId);
-  const teammateLane = ctx.currentLane[teammateId] ?? null;
+  const teammateIds = getTeammateIds(playerId, state);
+  // Use first teammate's lane for balancing (works for 2v2; 3v3 may need refinement)
+  const teammateLane = teammateIds.length > 0 ? (ctx.currentLane[teammateIds[0]] ?? null) : null;
 
   const spawners = myBuildings.filter(b =>
     b.type === BuildingType.MeleeSpawner ||
@@ -918,7 +1873,7 @@ function botEvaluateLanes(
 
   // STALL-BREAKER: after 7 min, both teammates commit to same lane to force a win
   if (targetLane === null && gameMinutes > 7) {
-    const enemyHqHp = state.hqHp[botEnemyTeam(playerId)];
+    const enemyHqHp = state.hqHp[botEnemyTeam(playerId, state)];
     if (enemyHqHp > HQ_HP * 0.3) {
       // Pick the lane with less enemy resistance
       const commitLane = enemyLeftStr <= enemyRightStr ? Lane.Left : Lane.Right;
@@ -936,163 +1891,73 @@ function botEvaluateLanes(
 
 // ==================== HARVESTER MANAGEMENT ====================
 
-/** Analyze what the bot wants to build/upgrade next and find the bottleneck resource. */
-function findBottleneckResource(
-  player: GameState['players'][0],
-  myBuildings: GameState['buildings'],
-): { bottleneck: HarvesterAssignment | null; goldDeficit: number; woodDeficit: number; stoneDeficit: number } {
-  const race = player.race;
-  const costs = RACE_BUILDING_COSTS[race];
-  const upgCosts = RACE_UPGRADE_COSTS[race];
-
-  // Collect costs of the next few things the bot likely wants
-  let wantGold = 0, wantWood = 0, wantStone = 0;
-
-  // Next building: check each type we might want, weighted by how many we have
-  const spawnerTypes = [BuildingType.MeleeSpawner, BuildingType.RangedSpawner, BuildingType.CasterSpawner];
-  const spawnerCount = myBuildings.filter(b => spawnerTypes.includes(b.type)).length;
-
-  if (spawnerCount < 5) {
-    // Average cost of the spawner types we'd build
-    for (const t of spawnerTypes) {
-      const c = costs[t];
-      wantGold += c.gold;
-      wantWood += c.wood;
-      wantStone += c.stone;
-    }
-  }
-
-  // Next upgrade: look at buildings that can still be upgraded
-  const upgradeable = myBuildings.filter(b => b.type !== BuildingType.HarvesterHut && b.upgradePath.length < 3);
-  if (upgradeable.length > 0) {
-    // Cheapest upcoming upgrade
-    const nextUpg = upgradeable[0];
-    const uc = nextUpg.upgradePath.length === 1 ? upgCosts.tier1 : upgCosts.tier2;
-    wantGold += uc.gold;
-    wantWood += uc.wood;
-    wantStone += uc.stone;
-  }
-
-  // How far short are we for these upcoming purchases?
-  const goldDeficit = Math.max(0, wantGold - player.gold);
-  const woodDeficit = Math.max(0, wantWood - player.wood);
-  const stoneDeficit = Math.max(0, wantStone - player.stone);
-
-  // Bottleneck = the resource with the biggest deficit (only if we actually need it)
-  let bottleneck: HarvesterAssignment | null = null;
-  let maxDeficit = 10; // minimum threshold to care
-  if (goldDeficit > maxDeficit) { bottleneck = HarvesterAssignment.BaseGold; maxDeficit = goldDeficit; }
-  if (woodDeficit > maxDeficit) { bottleneck = HarvesterAssignment.Wood; maxDeficit = woodDeficit; }
-  if (stoneDeficit > maxDeficit) { bottleneck = HarvesterAssignment.Stone; maxDeficit = stoneDeficit; }
-
-  return { bottleneck, goldDeficit, woodDeficit, stoneDeficit };
-}
-
+/** Forward-looking harvester management using intelligence resource projections. */
 function botManageHarvesters(
-  state: GameState, playerId: number, player: GameState['players'][0],
-  myBuildings: GameState['buildings'],
-  gameMinutes: number, emit: Emit,
+  state: GameState, ctx: BotContext, playerId: number, player: GameState['players'][0],
+  _myBuildings: GameState['buildings'],
+  _gameMinutes: number, emit: Emit,
 ): void {
   const myHarvesters = state.harvesters.filter(h => h.playerId === playerId);
   if (myHarvesters.length === 0) return;
 
-  const diamondExposed = state.diamond.exposed;
-  const goldCellsRemaining = state.diamondCells.filter(c => c.gold > 0).length;
-  const goldMostlyMined = goldCellsRemaining < state.diamondCells.length * 0.3;
+  const intel = ctx.intelligence[playerId];
+  const plan = intel?.resourcePlan;
 
-  // Determine primary/secondary resource based on actual building costs
-  const race = player.race;
-  const costs = RACE_BUILDING_COSTS[race];
-  let totalGoldNeed = 0, totalWoodNeed = 0, totalStoneNeed = 0;
-  for (const type of [BuildingType.MeleeSpawner, BuildingType.RangedSpawner, BuildingType.CasterSpawner, BuildingType.Tower]) {
-    const c = costs[type];
-    totalGoldNeed += c.gold;
-    totalWoodNeed += c.wood;
-    totalStoneNeed += c.stone;
+  // --- Build assignment plan ---
+  // Each harvester gets a desired assignment based on the forward-looking resource plan
+  const assignments: HarvesterAssignment[] = [];
+
+  if (plan) {
+    // Use the ideal split calculated by resource planner
+    const [idealGold, idealWood, idealStone, idealCenter] = plan.idealSplit;
+    for (let i = 0; i < idealGold; i++) assignments.push(HarvesterAssignment.BaseGold);
+    for (let i = 0; i < idealWood; i++) assignments.push(HarvesterAssignment.Wood);
+    for (let i = 0; i < idealStone; i++) assignments.push(HarvesterAssignment.Stone);
+    for (let i = 0; i < idealCenter; i++) assignments.push(HarvesterAssignment.Center);
+
+    // Pad or trim to match actual harvester count
+    while (assignments.length < myHarvesters.length) {
+      assignments.push(plan.bottleneck);
+    }
+    while (assignments.length > myHarvesters.length) {
+      assignments.pop();
+    }
+  } else {
+    // Fallback: use legacy primary/secondary resource logic
+    const race = player.race;
+    const costs = RACE_BUILDING_COSTS[race];
+    let totalGoldNeed = 0, totalWoodNeed = 0, totalStoneNeed = 0;
+    for (const type of [BuildingType.MeleeSpawner, BuildingType.RangedSpawner, BuildingType.CasterSpawner, BuildingType.Tower]) {
+      const c = costs[type];
+      totalGoldNeed += c.gold;
+      totalWoodNeed += c.wood;
+      totalStoneNeed += c.stone;
+    }
+    const resNeeds: [HarvesterAssignment, number][] = [
+      [HarvesterAssignment.BaseGold, totalGoldNeed],
+      [HarvesterAssignment.Wood, totalWoodNeed],
+      [HarvesterAssignment.Stone, totalStoneNeed],
+    ];
+    resNeeds.sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+    const primaryRes = resNeeds[0][1] > 0 ? resNeeds[0][0] : HarvesterAssignment.BaseGold;
+    const secondaryRes = resNeeds[1][1] > 0 ? resNeeds[1][0] : resNeeds[0][0];
+
+    for (let i = 0; i < myHarvesters.length; i++) {
+      if (i < 2) assignments.push(primaryRes);
+      else if (i < 3) assignments.push(secondaryRes);
+      else assignments.push(primaryRes);
+    }
   }
-  // Rank resources by total need across building types
-  const resNeeds: [HarvesterAssignment, number][] = [
-    [HarvesterAssignment.BaseGold, totalGoldNeed],
-    [HarvesterAssignment.Wood, totalWoodNeed],
-    [HarvesterAssignment.Stone, totalStoneNeed],
-  ];
-  resNeeds.sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
-  // Primary = most needed, secondary = second most needed (skip zero-need resources)
-  const primaryRes = resNeeds[0][1] > 0 ? resNeeds[0][0] : HarvesterAssignment.BaseGold;
-  const secondaryRes = resNeeds[1][1] > 0 ? resNeeds[1][0] : resNeeds[0][0];
 
-  // Context-aware bottleneck: what resource do we actually need right now?
-  const { bottleneck } = findBottleneckResource(player, myBuildings);
-
-  const resOf = (a: HarvesterAssignment): number => {
-    if (a === HarvesterAssignment.BaseGold || a === HarvesterAssignment.Center) return player.gold;
-    if (a === HarvesterAssignment.Wood) return player.wood;
-    return player.stone;
-  };
-
-  const primaryAmt = resOf(primaryRes);
-  const secondaryAmt = resOf(secondaryRes);
-  // Dynamic rebalancing: if one resource is overflowing, shift harvesters
-  const primaryStarved = primaryAmt < 30 && secondaryAmt > 60;
-  const secondaryStarved = secondaryAmt < 30 && primaryAmt > 60;
-  const primaryOverflow = primaryAmt > 200 && secondaryAmt < 50;
-  const secondaryOverflow = secondaryAmt > 200 && primaryAmt < 50;
-
+  // --- Apply assignments, respecting active harvesters ---
   for (let i = 0; i < myHarvesters.length; i++) {
     const h = myHarvesters[i];
 
     // Don't interrupt harvesters that are actively mining or carrying resources home
     if (h.state === 'mining' || h.state === 'walking_home') continue;
 
-    let desired: HarvesterAssignment;
-
-    if (i < 2) {
-      // First two harvesters: primary resource, but shift to bottleneck if identified
-      if (bottleneck && bottleneck !== primaryRes && bottleneck !== secondaryRes) {
-        // Bottleneck is a resource we don't normally collect much of — dedicate one harvester
-        desired = i === 0 ? bottleneck : primaryRes;
-      } else if (bottleneck && bottleneck === secondaryRes) {
-        // We need more of our secondary — split attention
-        desired = i === 0 ? primaryRes : secondaryRes;
-      } else if (primaryStarved || primaryOverflow) {
-        desired = secondaryRes;
-      } else {
-        desired = primaryRes;
-      }
-    } else if (i < 3) {
-      // Third: secondary resource, or bottleneck if different
-      if (bottleneck && bottleneck !== primaryRes && bottleneck !== secondaryRes) {
-        desired = bottleneck;
-      } else if (secondaryStarved || secondaryOverflow) {
-        desired = primaryRes;
-      } else {
-        desired = secondaryRes;
-      }
-    } else if (i === 3) {
-      // Fourth: balance or diamond
-      const likesDiamond = RACE_LIKES_DIAMOND[race];
-      if (likesDiamond && gameMinutes > 3 && !diamondExposed) {
-        desired = HarvesterAssignment.Center;
-      } else if (bottleneck) {
-        desired = bottleneck;
-      } else if (primaryAmt <= secondaryAmt) {
-        desired = primaryRes;
-      } else {
-        desired = secondaryRes;
-      }
-    } else {
-      // Fifth+: diamond focus (only if race likes diamond, otherwise alternate resources)
-      const likesDiamond = RACE_LIKES_DIAMOND[race];
-      if (likesDiamond && (diamondExposed || gameMinutes > 4)) {
-        desired = HarvesterAssignment.Center;
-      } else if (goldMostlyMined || !likesDiamond) {
-        desired = bottleneck ?? (i % 2 === 0 ? primaryRes : secondaryRes);
-      } else {
-        desired = HarvesterAssignment.Center;
-      }
-    }
-
-    if (h.assignment !== desired) {
+    const desired = assignments[i];
+    if (desired !== undefined && h.assignment !== desired) {
       const hut = state.buildings.find(b => b.id === h.hutId);
       if (hut) {
         emit({ type: 'set_hut_assignment', playerId, hutId: hut.id, assignment: desired });
@@ -1115,10 +1980,13 @@ function botNukeWithTelegraph(
     // Phase 1: Announce intent — check if we actually have a target first
     if (!botHasNukeTarget(state, playerId, myTeam, myHqHp)) return;
 
-    // Check if teammate already declared intent recently
-    const teammate = getTeammateId(playerId);
-    const teammateIntent = ctx.nukeIntentTick[teammate] ?? 0;
-    if (teammateIntent > 0 && state.tick - teammateIntent < TELEGRAPH_DELAY + 20) {
+    // Check if any teammate already declared intent recently
+    const teammates = getTeammateIds(playerId, state);
+    const anyTeammateNuking = teammates.some(tid => {
+      const tIntent = ctx.nukeIntentTick[tid] ?? 0;
+      return tIntent > 0 && state.tick - tIntent < TELEGRAPH_DELAY + 20;
+    });
+    if (anyTeammateNuking) {
       // Teammate is nuking — hold off
       return;
     }
@@ -1136,10 +2004,13 @@ function botNukeWithTelegraph(
   // Clear intent
   ctx.nukeIntentTick[playerId] = 0;
 
-  // Check if teammate declared intent AFTER us — if so, we yield
-  const teammate = getTeammateId(playerId);
-  const teammateIntent = ctx.nukeIntentTick[teammate] ?? 0;
-  if (teammateIntent > 0 && teammateIntent > intentTick) {
+  // Check if any teammate declared intent AFTER us — if so, we yield
+  const teammatesForNuke = getTeammateIds(playerId, state);
+  const teammateNukedAfterUs = teammatesForNuke.some(tid => {
+    const tIntent = ctx.nukeIntentTick[tid] ?? 0;
+    return tIntent > 0 && tIntent > intentTick;
+  });
+  if (teammateNukedAfterUs) {
     // Teammate declared after us — let them have it
     return;
   }
@@ -1155,10 +2026,8 @@ function botNukeWithTelegraph(
 
 /** Check if there's a worthwhile nuke target without actually firing. */
 function botHasNukeTarget(state: GameState, playerId: number, myTeam: Team, myHqHp: number): boolean {
-  const enemyTeam = botEnemyTeam(playerId);
-  const minY = myTeam === Team.Bottom ? 35 : 0;
-  const maxY = myTeam === Team.Bottom ? 120 : 85;
-  const enemyUnits = state.units.filter(u => u.team === enemyTeam && u.y >= minY && u.y <= maxY);
+  const enemyTeam = botEnemyTeam(playerId, state);
+  const enemyUnits = state.units.filter(u => u.team === enemyTeam);
 
   // Diamond carrier is always worth nuking
   if (state.units.some(u => u.team === enemyTeam && u.carryingDiamond)) return true;
@@ -1167,8 +2036,9 @@ function botHasNukeTarget(state: GameState, playerId: number, myTeam: Team, myHq
   if (enemyUnits.length < 2) return false;
 
   // HQ defense
-  const hqX = 40;
-  const hqY = myTeam === Team.Bottom ? 105 : 12;
+  const hq = getHQPosition(myTeam, state.mapDef);
+  const hqX = hq.x + HQ_WIDTH / 2;
+  const hqY = hq.y + HQ_HEIGHT / 2;
   if (myHqHp < HQ_HP * 0.5) {
     const nearHq = enemyUnits.filter(u => {
       const dx = u.x - hqX; const dy = u.y - hqY;
@@ -1184,12 +2054,8 @@ function botHasNukeTarget(state: GameState, playerId: number, myTeam: Team, myHq
 }
 
 function botFireNuke(state: GameState, playerId: number, myTeam: Team, myHqHp: number, emit: Emit): void {
-  const enemyTeam = botEnemyTeam(playerId);
-  const minY = myTeam === Team.Bottom ? 35 : 0;
-  const maxY = myTeam === Team.Bottom ? 120 : 85;
-  const enemyUnits = state.units.filter(
-    u => u.team === enemyTeam && u.y >= minY && u.y <= maxY
-  );
+  const enemyTeam = botEnemyTeam(playerId, state);
+  const enemyUnits = state.units.filter(u => u.team === enemyTeam);
 
   // Priority 1: Nuke diamond carriers
   const carrier = state.units.find(u => u.team === enemyTeam && u.carryingDiamond);
@@ -1206,8 +2072,9 @@ function botFireNuke(state: GameState, playerId: number, myTeam: Team, myHqHp: n
   if (enemyUnits.length < 2) return;
 
   // Priority 2: HQ defense
-  const hqX = 40;
-  const hqY = myTeam === Team.Bottom ? 105 : 12;
+  const hq = getHQPosition(myTeam, state.mapDef);
+  const hqX = hq.x + HQ_WIDTH / 2;
+  const hqY = hq.y + HQ_HEIGHT / 2;
   const hqInDanger = myHqHp < HQ_HP * 0.5;
 
   const nearHqEnemies = enemyUnits.filter(u => {

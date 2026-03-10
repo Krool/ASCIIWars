@@ -24,12 +24,17 @@ export class SceneManager {
   }
 
   private resizeCanvas(): void {
-    const w = window.innerWidth;
-    const h = window.innerHeight;
+    const dpr = window.devicePixelRatio || 1;
+    const w = Math.round(window.innerWidth * dpr);
+    const h = Math.round(window.innerHeight * dpr);
     // Only set dimensions when they actually change — setting canvas.width
     // clears the buffer, which would blank the screen every frame.
-    if (this.canvas.width !== w) this.canvas.width = w;
-    if (this.canvas.height !== h) this.canvas.height = h;
+    if (this.canvas.width !== w || this.canvas.height !== h) {
+      this.canvas.style.width = window.innerWidth + 'px';
+      this.canvas.style.height = window.innerHeight + 'px';
+      this.canvas.width = w;
+      this.canvas.height = h;
+    }
   }
 
   register(name: string, scene: Scene): void {
@@ -66,6 +71,9 @@ export class SceneManager {
     this.resizeCanvas();
 
     if (this.currentScene && !this.currentScene.ownsLoop) {
+      // Apply DPR base transform before every render so scenes draw in CSS-pixel coords
+      const dpr = window.devicePixelRatio || 1;
+      this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       this.currentScene.update(dt);
       this.currentScene.render(this.ctx);
     }

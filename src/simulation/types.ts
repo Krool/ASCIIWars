@@ -146,6 +146,54 @@ export const LANE_PATHS = {
   },
 } as const;
 
+// === Map Definition ===
+
+/** Per-player layout slot within a map */
+export interface PlayerSlotDef {
+  teamIndex: number;           // which team (0 or 1) this player belongs to
+  buildGridOrigin: Vec2;       // top-left of BUILD_GRID (14×3) in world tiles
+  hutGridOrigin: Vec2;         // top-left of HUT_GRID (10×1) in world tiles
+}
+
+/** Per-team shared layout */
+export interface TeamDef {
+  hqPosition: Vec2;            // top-left corner of HQ building
+  towerAlleyOrigin: Vec2;      // top-left of shared tower alley grid
+}
+
+/** Lane path set for one team */
+export interface TeamLanePaths {
+  left: Vec2[];
+  right: Vec2[];
+}
+
+/**
+ * Data-driven map definition. All layout comes from here —
+ * no hardcoded positions outside of MapDef constants.
+ * Supports portrait (duel) and landscape (skirmish) orientations.
+ */
+export interface MapDef {
+  id: string;
+  name: string;
+  width: number;
+  height: number;
+  maxPlayers: number;          // 4 for duel, 6 for skirmish
+  playersPerTeam: number;      // 2 for duel, 3 for skirmish
+  teams: [TeamDef, TeamDef];   // exactly 2 teams (indices 0 and 1)
+  playerSlots: PlayerSlotDef[];// indexed by playerId (0..maxPlayers-1)
+  lanePaths: [TeamLanePaths, TeamLanePaths]; // indexed by team (0, 1)
+  diamondCenter: Vec2;
+  diamondHalfW: number;
+  diamondHalfH: number;
+  resourceNodes: { type: ResourceType; x: number; y: number }[];
+  /** Returns true if tile (x, y) is within the playable map boundary */
+  isPlayable(x: number, y: number): boolean;
+  /** Returns the playable x-range for a given row (portrait) or y-range for a given col (landscape) */
+  getPlayableRange(axisPos: number): { min: number; max: number };
+  /** Which axis the shape varies along: 'y' for portrait maps, 'x' for landscape */
+  shapeAxis: 'y' | 'x';
+}
+
 // === Enums ===
 
 export enum Team {
@@ -197,7 +245,7 @@ export enum StatusType {
   Slow = 'slow',       // -10% move speed per stack, max 5
   Burn = 'burn',       // 2 dmg/sec per stack for 3s, max 5
   Haste = 'haste',     // 1.3x speed, 3s, no stack, refreshes
-  Shield = 'shield',   // absorbs 20 damage, 5s, 1 instance
+  Shield = 'shield',   // absorbs 12 damage, 4s, 1 instance
 }
 
 export interface StatusEffect {
@@ -338,6 +386,7 @@ export interface ProjectileState {
   extraBurnStacks?: number;
   extraSlowStacks?: number;
   splashDamagePct?: number;
+  lifestealPct?: number;
 }
 
 export interface FloatingText {
@@ -462,6 +511,7 @@ export interface GameState {
   tick: number;
   rng: () => number;             // seeded PRNG — use instead of Math.random() in simulation
   rngSeed: number;               // initial seed (for resync / debug)
+  mapDef: MapDef;                // map layout definition (duel, skirmish, etc.)
   players: PlayerState[];
   buildings: BuildingState[];
   units: UnitState[];
@@ -469,7 +519,7 @@ export interface GameState {
   projectiles: ProjectileState[];
   diamond: DiamondState;
   diamondCells: GoldCell[]; // the mineable gold cells forming the obstacle
-  hqHp: [number, number];
+  hqHp: number[];               // indexed by team (0, 1); length matches mapDef.teams.length
   winner: Team | null;
   winCondition: 'military' | 'diamond' | 'timeout' | null;
   matchPhase: 'prematch' | 'playing' | 'ended';

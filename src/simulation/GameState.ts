@@ -1,5 +1,5 @@
 import {
-  GameState, PlayerState, DiamondState, Team, Race, Lane, createPlayerStats,
+  GameState, PlayerState, DiamondState, Team, Race, Lane, MapDef, createPlayerStats,
   MAP_WIDTH, MAP_HEIGHT, HQ_HP, HQ_WIDTH, HQ_HEIGHT,
   BUILD_GRID_COLS, BUILD_GRID_ROWS, HUT_GRID_COLS, SHARED_ALLEY_COLS, SHARED_ALLEY_ROWS, ZONES, TICK_RATE,
   DIAMOND_CENTER_X, DIAMOND_CENTER_Y, DIAMOND_HALF_W, DIAMOND_HALF_H,
@@ -11,6 +11,7 @@ import {
   HarvesterAssignment, HarvesterState, UnitState, WarHero,
   StatusType, SoundEvent, CombatEvent, createSeededRng,
 } from './types';
+import { DUEL_MAP } from './maps';
 import {
   SPAWN_INTERVAL_TICKS, UNIT_STATS, TOWER_STATS,
   HARVESTER_MOVE_SPEED, MINE_TIME_BASE_TICKS, MINE_TIME_DIAMOND_TICKS,
@@ -122,12 +123,12 @@ function addSound(state: GameState, type: SoundEvent['type'], x?: number, y?: nu
 
 // === Generate diamond-shaped gold cell grid ===
 
-function generateDiamondCells(): GoldCell[] {
+function generateDiamondCells(mapDef?: MapDef): GoldCell[] {
   const cells: GoldCell[] = [];
-  const cx = DIAMOND_CENTER_X;
-  const cy = DIAMOND_CENTER_Y;
-  const hw = DIAMOND_HALF_W;
-  const hh = DIAMOND_HALF_H;
+  const cx = mapDef?.diamondCenter.x ?? DIAMOND_CENTER_X;
+  const cy = mapDef?.diamondCenter.y ?? DIAMOND_CENTER_Y;
+  const hw = mapDef?.diamondHalfW ?? DIAMOND_HALF_W;
+  const hh = mapDef?.diamondHalfH ?? DIAMOND_HALF_H;
 
   for (let dy = -hh; dy <= hh; dy++) {
     const rowWidth = Math.round(hw * (1 - Math.abs(dy) / hh));
@@ -146,32 +147,35 @@ function generateDiamondCells(): GoldCell[] {
   return cells;
 }
 
-function isDiamondExposed(cellMap: Map<string, GoldCell>): boolean {
+function isDiamondExposed(cellMap: Map<string, GoldCell>, state: GameState): boolean {
+  const cx = state.diamond.x, cy = state.diamond.y;
   const neighbors = [
-    { x: DIAMOND_CENTER_X - 1, y: DIAMOND_CENTER_Y },
-    { x: DIAMOND_CENTER_X + 1, y: DIAMOND_CENTER_Y },
-    { x: DIAMOND_CENTER_X, y: DIAMOND_CENTER_Y - 1 },
-    { x: DIAMOND_CENTER_X, y: DIAMOND_CENTER_Y + 1 },
+    { x: cx - 1, y: cy },
+    { x: cx + 1, y: cy },
+    { x: cx, y: cy - 1 },
+    { x: cx, y: cy + 1 },
   ];
   for (const n of neighbors) {
     const cell = cellMap.get(`${n.x},${n.y}`);
     if (!cell || cell.gold <= 0) {
-      if (hasPathToEdge(cellMap, n.x, n.y)) return true;
+      if (hasPathToEdge(cellMap, n.x, n.y, state)) return true;
     }
   }
   return false;
 }
 
-function hasPathToEdge(cellMap: Map<string, GoldCell>, sx: number, sy: number): boolean {
+function hasPathToEdge(cellMap: Map<string, GoldCell>, sx: number, sy: number, state: GameState): boolean {
+  const cx = state.diamond.x, cy = state.diamond.y;
+  const hw = state.mapDef.diamondHalfW, hh = state.mapDef.diamondHalfH;
   const visited = new Set<string>();
   const queue: { x: number; y: number }[] = [{ x: sx, y: sy }];
   visited.add(`${sx},${sy}`);
 
   while (queue.length > 0) {
     const cur = queue.shift()!;
-    const dx = Math.abs(cur.x - DIAMOND_CENTER_X);
-    const dy = Math.abs(cur.y - DIAMOND_CENTER_Y);
-    if (dx > DIAMOND_HALF_W || dy > DIAMOND_HALF_H) return true;
+    const dx = Math.abs(cur.x - cx);
+    const dy = Math.abs(cur.y - cy);
+    if (dx > hw || dy > hh) return true;
 
     for (const [nx, ny] of [[cur.x-1,cur.y],[cur.x+1,cur.y],[cur.x,cur.y-1],[cur.x,cur.y+1]]) {
       const key = `${nx},${ny}`;
@@ -245,12 +249,14 @@ function addCombatEvent(state: GameState, evt: CombatEvent): void {
 export function createInitialState(
   players: { race: Race; isBot: boolean }[],
   seed?: number,
+  mapDef?: MapDef,
 ): GameState {
+  const map = mapDef ?? DUEL_MAP;
   const rngSeed = seed ?? (Date.now() ^ (Math.random() * 0xffffffff));
   const rng = createSeededRng(rngSeed);
   const playerStates: PlayerState[] = players.map((p, i) => ({
     id: i,
-    team: i < 2 ? Team.Bottom : Team.Top,
+    team: (map.playerSlots[i]?.teamIndex ?? (i < 2 ? 0 : 1)) as Team,
     race: p.race,
     gold: INITIAL_RESOURCES[p.race].gold,
     wood: INITIAL_RESOURCES[p.race].wood,
@@ -262,8 +268,8 @@ export function createInitialState(
   }));
 
   const diamond: DiamondState = {
-    x: DIAMOND_CENTER_X,
-    y: DIAMOND_CENTER_Y,
+    x: map.diamondCenter.x,
+    y: map.diamondCenter.y,
     exposed: false,
     state: 'hidden',
     carrierId: null,
@@ -275,14 +281,15 @@ export function createInitialState(
     tick: 0,
     rng,
     rngSeed,
+    mapDef: map,
     players: playerStates,
     buildings: [],
     units: [],
     harvesters: [],
     projectiles: [],
     diamond,
-    diamondCells: generateDiamondCells(),
-    hqHp: [HQ_HP, HQ_HP],
+    diamondCells: generateDiamondCells(map),
+    hqHp: map.teams.map(() => HQ_HP),
     winner: null,
     winCondition: null,
     matchPhase: 'prematch',
@@ -304,7 +311,7 @@ export function createInitialState(
   // Give each player a free starter hut + harvester
   for (let i = 0; i < playerStates.length; i++) {
     const p = playerStates[i];
-    const origin = getHutGridOrigin(i);
+    const origin = getHutGridOrigin(i, map);
     const gx = 4; // center slot
     const world = { x: origin.x + gx, y: origin.y };
     const hutHp = getBuildingCost(p.race, BuildingType.HarvesterHut).hp;
@@ -331,8 +338,15 @@ export function createInitialState(
 }
 
 // === Layout helpers ===
+// All layout functions accept an optional MapDef. When omitted, they use DUEL_MAP
+// (backward-compatible with all existing callers).
 
-export function getBuildGridOrigin(playerId: number): { x: number; y: number } {
+export function getBuildGridOrigin(playerId: number, mapDef?: MapDef): { x: number; y: number } {
+  if (mapDef) {
+    const slot = mapDef.playerSlots[playerId];
+    if (slot) return { ...slot.buildGridOrigin };
+  }
+  // Legacy duel map fallback
   const team = playerId < 2 ? Team.Bottom : Team.Top;
   const isLeft = playerId === 0 || playerId === 2;
 
@@ -351,39 +365,51 @@ export function getBuildGridOrigin(playerId: number): { x: number; y: number } {
   return { x, y };
 }
 
-// Hut zone: 10-wide × 1-tall row at the far edge of the player's base
-export function getHutGridOrigin(playerId: number): { x: number; y: number } {
+export function getHutGridOrigin(playerId: number, mapDef?: MapDef): { x: number; y: number } {
+  if (mapDef) {
+    const slot = mapDef.playerSlots[playerId];
+    if (slot) return { ...slot.hutGridOrigin };
+  }
+  // Legacy duel map fallback
   const team = playerId < 2 ? Team.Bottom : Team.Top;
-  // Player-specific hut origins are intentionally tuned to match visual spacing goals.
-  // P1/P3 rows start at x=29 and P2/P4 rows start at x=41, producing a 2-tile gap
-  // between the two 10-wide hut rows (mirrors the build-grid center gap).
   const x = (playerId === 0 || playerId === 2) ? 29 : 41;
   const y = team === Team.Bottom ? ZONES.BOTTOM_BASE.end - 2 : ZONES.TOP_BASE.start + 1;
   return { x, y };
 }
 
-// Shared tower alley: 10-wide × 3-tall grid per team, centred on the neck path (x=35, overlaps x=40)
-export function getTeamAlleyOrigin(team: Team): { x: number; y: number } {
-  // 20-wide grid centered on x=40 → starts at x=30
-  // 12-tall grid: bottom team above neck, top team below neck
+export function getTeamAlleyOrigin(team: Team, mapDef?: MapDef): { x: number; y: number } {
+  if (mapDef) {
+    const teamDef = mapDef.teams[team];
+    if (teamDef) return { ...teamDef.towerAlleyOrigin };
+  }
+  // Legacy duel map fallback
   return { x: 30, y: team === Team.Bottom ? 82 : 26 };
 }
 
-export function getHQPosition(team: Team): { x: number; y: number } {
+export function getHQPosition(team: Team, mapDef?: MapDef): { x: number; y: number } {
+  if (mapDef) {
+    const teamDef = mapDef.teams[team];
+    if (teamDef) return { ...teamDef.hqPosition };
+  }
+  // Legacy duel map fallback
   const centerX = Math.floor(MAP_WIDTH / 2) - Math.floor(HQ_WIDTH / 2);
   return team === Team.Bottom
     ? { x: centerX, y: ZONES.BOTTOM_BASE.start + 1 }
     : { x: centerX, y: ZONES.TOP_BASE.end - HQ_HEIGHT - 1 };
 }
 
-export function gridSlotToWorld(playerId: number, gridX: number, gridY: number): { x: number; y: number } {
-  const origin = getBuildGridOrigin(playerId);
+export function gridSlotToWorld(playerId: number, gridX: number, gridY: number, mapDef?: MapDef): { x: number; y: number } {
+  const origin = getBuildGridOrigin(playerId, mapDef);
   return { x: origin.x + gridX, y: origin.y + gridY };
 }
 
 // === Lane path helpers ===
 
-function getLanePath(team: Team, lane: Lane): readonly Vec2[] {
+function getLanePath(team: Team, lane: Lane, mapDef?: MapDef): readonly Vec2[] {
+  if (mapDef) {
+    const paths = mapDef.lanePaths[team];
+    return lane === Lane.Left ? paths.left : paths.right;
+  }
   return team === Team.Bottom
     ? (lane === Lane.Left ? LANE_PATHS.bottom.left : LANE_PATHS.bottom.right)
     : (lane === Lane.Left ? LANE_PATHS.top.left : LANE_PATHS.top.right);
@@ -408,27 +434,53 @@ function getPathLength(path: readonly Vec2[]): number {
   return len;
 }
 
-// Precomputed path lengths — paths are constants so this is safe to cache at module level
-const PATH_LENGTH: Record<string, number> = {
-  'bottom_left':  getPathLength(LANE_PATHS.bottom.left),
-  'bottom_right': getPathLength(LANE_PATHS.bottom.right),
-  'top_left':     getPathLength(LANE_PATHS.top.left),
-  'top_right':    getPathLength(LANE_PATHS.top.right),
-};
-function getCachedPathLength(team: Team, lane: Lane): number {
-  return PATH_LENGTH[`${team === Team.Bottom ? 'bottom' : 'top'}_${lane}`];
+// Precomputed path lengths — cached per map on first access
+const PATH_LENGTH_CACHE = new Map<string, Record<string, number>>();
+function getCachedPathLength(team: Team, lane: Lane, mapDef?: MapDef): number {
+  const mapId = mapDef?.id ?? 'duel';
+  let cache = PATH_LENGTH_CACHE.get(mapId);
+  if (!cache) {
+    cache = {};
+    if (mapDef) {
+      for (let t = 0; t < mapDef.lanePaths.length; t++) {
+        const paths = mapDef.lanePaths[t];
+        cache[`${t}_left`] = getPathLength(paths.left);
+        cache[`${t}_right`] = getPathLength(paths.right);
+      }
+    } else {
+      cache['0_left'] = getPathLength(LANE_PATHS.bottom.left);
+      cache['0_right'] = getPathLength(LANE_PATHS.bottom.right);
+      cache['1_left'] = getPathLength(LANE_PATHS.top.left);
+      cache['1_right'] = getPathLength(LANE_PATHS.top.right);
+    }
+    PATH_LENGTH_CACHE.set(mapId, cache);
+  }
+  return cache[`${team}_${lane}`] ?? cache['0_left'] ?? 100;
 }
 
-const CHOKE_POINTS: readonly Vec2[] = [
-  { x: 40, y: 95 },
-  { x: 40, y: 82 },
-  { x: 40, y: 38 },
-  { x: 40, y: 25 },
-];
+// Choke points: where units bunch up (necks of the peanut shape)
+function getChokePoints(mapDef?: MapDef): readonly Vec2[] {
+  if (mapDef && mapDef.shapeAxis === 'x') {
+    // Landscape: chokes at the neck columns (x ≈ 45 and x ≈ 115)
+    const midY = Math.floor(mapDef.height / 2);
+    return [
+      { x: 45, y: midY }, { x: 45, y: midY - 15 }, { x: 45, y: midY + 15 },
+      { x: 115, y: midY }, { x: 115, y: midY - 15 }, { x: 115, y: midY + 15 },
+    ];
+  }
+  // Portrait (duel): hardcoded vertical chokes
+  return [
+    { x: 40, y: 95 },
+    { x: 40, y: 82 },
+    { x: 40, y: 38 },
+    { x: 40, y: 25 },
+  ];
+}
 
-function getChokeSpreadMultiplier(x: number, y: number): number {
+function getChokeSpreadMultiplier(x: number, y: number, mapDef?: MapDef): number {
+  const chokePoints = getChokePoints(mapDef);
   let best = Infinity;
-  for (const p of CHOKE_POINTS) {
+  for (const p of chokePoints) {
     const d = Math.sqrt((x - p.x) ** 2 + (y - p.y) ** 2);
     if (d < best) best = d;
   }
@@ -488,10 +540,10 @@ export function simulateTick(state: GameState, commands: GameCommand[]): void {
 
   // Update diamond exposed state (check every second, not every tick — BFS is expensive)
   if (state.diamond.state === 'hidden' && state.tick % TICK_RATE === 0) {
-    if (isDiamondExposed(diamondCellMap)) {
+    if (isDiamondExposed(diamondCellMap, state)) {
       state.diamond.exposed = true;
       state.diamond.state = 'exposed';
-      addSound(state, 'diamond_exposed', DIAMOND_CENTER_X, DIAMOND_CENTER_Y);
+      addSound(state, 'diamond_exposed', state.diamond.x, state.diamond.y);
     }
   }
 
@@ -522,8 +574,17 @@ export function simulateTick(state: GameState, commands: GameCommand[]): void {
 
   if (state.tick >= 30 * 60 * TICK_RATE) {
     state.matchPhase = 'ended';
-    if (state.hqHp[0] > state.hqHp[1]) state.winner = Team.Bottom;
-    else if (state.hqHp[1] > state.hqHp[0]) state.winner = Team.Top;
+    // Timeout: team with most HP wins
+    let bestTeam: Team | null = null;
+    let bestHp = -1;
+    for (let t = 0; t < state.hqHp.length; t++) {
+      if (state.hqHp[t] > bestHp) { bestHp = state.hqHp[t]; bestTeam = t as Team; }
+    }
+    if (bestTeam !== null) {
+      // Only set winner if one team is strictly ahead
+      const tied = state.hqHp.filter(hp => hp === bestHp).length > 1;
+      if (!tied) state.winner = bestTeam;
+    }
     state.winCondition = 'timeout';
   }
 
@@ -596,17 +657,24 @@ function placeBuilding(state: GameState, cmd: Extract<GameCommand, { type: 'plac
   }
 
   const isAlley = cmd.gridType === 'alley';
-  const isLeft = cmd.playerId === 0 || cmd.playerId === 2;
+  // Determine default lane: first player in team → left lane, second → right, third → left, etc.
+  const myTeamIdx = state.mapDef?.playerSlots[cmd.playerId]?.teamIndex ?? (cmd.playerId < 2 ? 0 : 1);
+  let posInTeam = 0;
+  for (let i = 0; i < cmd.playerId; i++) {
+    const otherTeam = state.mapDef?.playerSlots[i]?.teamIndex ?? (i < 2 ? 0 : 1);
+    if (otherTeam === myTeamIdx) posInTeam++;
+  }
+  const isLeft = posInTeam % 2 === 0;
 
   if (isAlley) {
     // Shared tower alley: only towers allowed; occupancy is team-wide
     if (cmd.buildingType !== BuildingType.Tower) return;
     if (cmd.gridX < 0 || cmd.gridX >= SHARED_ALLEY_COLS || cmd.gridY < 0 || cmd.gridY >= SHARED_ALLEY_ROWS) return;
-    const playerTeam = cmd.playerId < 2 ? Team.Bottom : Team.Top;
+    const playerTeam = state.players[cmd.playerId]?.team ?? (cmd.playerId < 2 ? Team.Bottom : Team.Top);
     if (state.buildings.some(b => b.buildGrid === 'alley' &&
-        (b.playerId < 2 ? Team.Bottom : Team.Top) === playerTeam &&
+        (state.players[b.playerId]?.team ?? (b.playerId < 2 ? Team.Bottom : Team.Top)) === playerTeam &&
         b.gridX === cmd.gridX && b.gridY === cmd.gridY)) return;
-    const origin = getTeamAlleyOrigin(playerTeam);
+    const origin = getTeamAlleyOrigin(playerTeam, state.mapDef);
     const world = { x: origin.x + cmd.gridX, y: origin.y + cmd.gridY };
     if (!isFirstTower) { player.gold -= cost.gold; player.wood -= cost.wood; player.stone -= cost.stone; }
     state.buildings.push({
@@ -622,7 +690,7 @@ function placeBuilding(state: GameState, cmd: Extract<GameCommand, { type: 'plac
     if (cmd.gridX < 0 || cmd.gridX >= BUILD_GRID_COLS || cmd.gridY < 0 || cmd.gridY >= BUILD_GRID_ROWS) return;
     if (state.buildings.some(b => b.buildGrid === 'military' && b.playerId === cmd.playerId && b.gridX === cmd.gridX && b.gridY === cmd.gridY)) return;
     if (!isFirstTower) { player.gold -= cost.gold; player.wood -= cost.wood; player.stone -= cost.stone; }
-    const world = gridSlotToWorld(cmd.playerId, cmd.gridX, cmd.gridY);
+    const world = gridSlotToWorld(cmd.playerId, cmd.gridX, cmd.gridY, state.mapDef);
     const initialTimer = cmd.buildingType === BuildingType.Tower ? 0 : SPAWN_INTERVAL_TICKS;
     state.buildings.push({
       id: genId(state), type: cmd.buildingType, playerId: cmd.playerId, buildGrid: 'military',
@@ -685,7 +753,7 @@ function buildHut(state: GameState, cmd: Extract<GameCommand, { type: 'build_hut
   player.wood -= woodCost;
   player.stone -= stoneCost;
 
-  const origin = getHutGridOrigin(cmd.playerId);
+  const origin = getHutGridOrigin(cmd.playerId, state.mapDef);
   const occupiedHuts = new Set(myHuts.map(b => b.gridX));
   // Fill from center outward
   const CENTER_OUT = [4, 5, 3, 6, 2, 7, 1, 8, 0, 9];
@@ -849,7 +917,7 @@ function tickUnitMovement(state: GameState): void {
 
     // Phase 1: Walking from building to lane path start
     if (unit.pathProgress < 0) {
-      const path = getLanePath(unit.team, unit.lane);
+      const path = getLanePath(unit.team, unit.lane, state.mapDef);
       const target = path[0]; // first waypoint
       const dx = target.x - unit.x, dy = target.y - unit.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
@@ -859,14 +927,14 @@ function tickUnitMovement(state: GameState): void {
         unit.x = target.x;
         unit.y = target.y;
       } else {
-        moveWithSlide(unit, target.x, target.y, movePerTick, state.diamondCells);
+        moveWithSlide(unit, target.x, target.y, movePerTick, state.diamondCells, state.mapDef);
       }
       continue;
     }
 
     // Phase 2: Following lane path
-    const path = getLanePath(unit.team, unit.lane);
-    const pathLen = getCachedPathLength(unit.team, unit.lane);
+    const path = getLanePath(unit.team, unit.lane, state.mapDef);
+    const pathLen = getCachedPathLength(unit.team, unit.lane, state.mapDef);
 
     // Ranged units prefer to stay ~3 tiles behind nearest allied melee
     if (unit.category === 'ranged') {
@@ -910,7 +978,7 @@ function tickUnitMovement(state: GameState): void {
 
     const pos = interpolatePath(path, unit.pathProgress);
     const posAhead = interpolatePath(path, Math.min(1, unit.pathProgress + 0.01));
-    const chokeSpread = getChokeSpreadMultiplier(pos.x, pos.y);
+    const chokeSpread = getChokeSpreadMultiplier(pos.x, pos.y, state.mapDef);
 
     let sep = 0;
     let sepCount = 0;
@@ -938,7 +1006,7 @@ function tickUnitMovement(state: GameState): void {
     const dy = desiredY - unit.y;
     const dist = Math.sqrt(dx * dx + dy * dy);
     if (dist > movePerTick && dist > 0.001) {
-      moveWithSlide(unit, desiredX, desiredY, movePerTick, state.diamondCells);
+      moveWithSlide(unit, desiredX, desiredY, movePerTick, state.diamondCells, state.mapDef);
     } else if (!isBlocked(desiredX, desiredY, 0.45, state.diamondCells)) {
       unit.x = desiredX;
       unit.y = desiredY;
@@ -950,7 +1018,7 @@ function tickUnitDiamondPickup(state: GameState): void {
   // Check if any unit carrying diamond reached own HQ (diamond delivery)
   for (const unit of state.units) {
     if (!unit.carryingDiamond || unit.hp <= 0) continue;
-    const hq = getHQPosition(unit.team);
+    const hq = getHQPosition(unit.team, state.mapDef);
     const hqCx = hq.x + HQ_WIDTH / 2, hqCy = hq.y + HQ_HEIGHT / 2;
     const dx = unit.x - hqCx, dy = unit.y - hqCy;
     if (dx * dx + dy * dy <= 9) { // 3 tile deposit radius
@@ -994,11 +1062,11 @@ function applyStatus(target: UnitState, type: StatusType, stacks: number): void 
   if (type === StatusType.Shield && target.shieldHp <= 0) target.shieldHp = 12;
 }
 
-function applyKnockback(unit: UnitState, amount: number): void {
+function applyKnockback(unit: UnitState, amount: number, mapDef?: MapDef): void {
   if (unit.pathProgress < 0) return; // not on path yet
   // Push unit backward along its path
   unit.pathProgress = Math.max(0, unit.pathProgress - amount);
-  const path = getLanePath(unit.team, unit.lane);
+  const path = getLanePath(unit.team, unit.lane, mapDef);
   const pos = interpolatePath(path, unit.pathProgress);
   unit.x = pos.x;
   unit.y = pos.y;
@@ -1035,7 +1103,7 @@ function dealDamage(state: GameState, target: UnitState, amount: number, showFlo
       state.playerStats[sourcePlayerId].totalDamageDealt += amount;
       // Check if near own HQ (within 20 tiles)
       const team = state.players[sourcePlayerId].team;
-      const hq = getHQPosition(team);
+      const hq = getHQPosition(team, state.mapDef);
       const hqCx = hq.x + HQ_WIDTH / 2, hqCy = hq.y + HQ_HEIGHT / 2;
       const dx = target.x - hqCx, dy = target.y - hqCy;
       if (dx * dx + dy * dy <= 400) { // 20 tile radius
@@ -1204,7 +1272,6 @@ function applyCasterSupport(state: GameState, caster: UnitState, race: Race, sp:
 function applyOnHitEffects(state: GameState, attacker: UnitState, target: UnitState): void {
   const race = state.players[attacker.playerId].race;
   const isMelee = attacker.range <= 2;
-  const isCaster = attacker.category === 'caster';
   const sp = attacker.upgradeSpecial;
 
   switch (race) {
@@ -1217,7 +1284,7 @@ function applyOnHitEffects(state: GameState, attacker: UnitState, target: UnitSt
         attacker.hitCount++;
         const knockN = sp?.knockbackEveryN ?? 3;
         if (knockN > 0 && attacker.hitCount % knockN === 0) {
-          applyKnockback(target, 0.02);
+          applyKnockback(target, 0.02, state.mapDef);
           addDeathParticles(state, target.x, target.y, '#ffab40', 3);
           addCombatEvent(state, { type: 'knockback', x: target.x, y: target.y, color: '#ffab40' });
           if (state.rng() < 0.3) addFloatingText(state, target.x, target.y - 0.3, 'PUSH', '#ffab40');
@@ -1230,10 +1297,8 @@ function applyOnHitEffects(state: GameState, attacker: UnitState, target: UnitSt
       }
       break;
     case Race.Goblins:
-      // Sticker: 15% dodge is passive (handled in damage calc), on-hit burn from Knifer
-      if (!isMelee && !isCaster) {
-        applyStatus(target, StatusType.Burn, 1 + (sp?.extraBurnStacks ?? 0));
-      }
+      // Sticker: 15% dodge is passive (handled in damage calc)
+      // Knifer burn is applied via projectile hit logic (tickProjectiles)
       break;
     case Race.Oozlings:
       // Globule: 15% chance haste on melee hit
@@ -1248,9 +1313,8 @@ function applyOnHitEffects(state: GameState, attacker: UnitState, target: UnitSt
       break;
     case Race.Deep:
       // Shell Guard: slow on melee hit
+      // Harpooner ranged +2 slow is applied via projectile hit logic (tickProjectiles)
       if (isMelee) applyStatus(target, StatusType.Slow, 1 + (sp?.extraSlowStacks ?? 0));
-      // Harpooner: +2 slow on ranged hit
-      if (!isMelee && !isCaster) applyStatus(target, StatusType.Slow, 2 + (sp?.extraSlowStacks ?? 0));
       break;
     case Race.Wild:
       // Lurker: burn (poison) on melee hit
@@ -1264,12 +1328,7 @@ function applyOnHitEffects(state: GameState, attacker: UnitState, target: UnitSt
         attacker.hp = Math.min(attacker.maxHp, attacker.hp + geistMeleeSteal);
         if (geistMeleeSteal > 0) addCombatEvent(state, { type: 'lifesteal', x: target.x, y: target.y, x2: attacker.x, y2: attacker.y, color: '#b39ddb' });
       }
-      // Wraith Bow: lifesteal 20% on ranged hit
-      if (!isMelee && !isCaster) {
-        const geistRangedSteal = Math.round(attacker.damage * 0.2);
-        attacker.hp = Math.min(attacker.maxHp, attacker.hp + geistRangedSteal);
-        if (geistRangedSteal > 0) addCombatEvent(state, { type: 'lifesteal', x: target.x, y: target.y, x2: attacker.x, y2: attacker.y, color: '#b39ddb' });
-      }
+      // Wraith Bow: 20% ranged lifesteal is applied via projectile hit logic (tickProjectiles)
       break;
     case Race.Tenders:
       // Treant: slow on melee hit (entangling roots)
@@ -1295,12 +1354,24 @@ function pushOutFromPoint(unit: UnitState, cx: number, cy: number, radius: numbe
   unit.y += (dy / dist) * push;
 }
 
-function clampToArenaBounds(pos: { x: number; y: number }, radius: number): void {
-  pos.y = Math.max(radius, Math.min(MAP_HEIGHT - radius, pos.y));
-  const margin = getMarginAtRow(pos.y);
-  const minX = margin + radius;
-  const maxX = MAP_WIDTH - margin - radius;
-  pos.x = Math.max(minX, Math.min(maxX, pos.x));
+function clampToArenaBounds(pos: { x: number; y: number }, radius: number, mapDef?: MapDef): void {
+  const mw = mapDef?.width ?? MAP_WIDTH;
+  const mh = mapDef?.height ?? MAP_HEIGHT;
+  pos.x = Math.max(radius, Math.min(mw - radius, pos.x));
+  pos.y = Math.max(radius, Math.min(mh - radius, pos.y));
+  if (mapDef) {
+    // Use map's playable range along the shape axis
+    if (mapDef.shapeAxis === 'x') {
+      const range = mapDef.getPlayableRange(pos.x);
+      pos.y = Math.max(range.min + radius, Math.min(range.max - radius, pos.y));
+    } else {
+      const range = mapDef.getPlayableRange(pos.y);
+      pos.x = Math.max(range.min + radius, Math.min(range.max - radius, pos.x));
+    }
+  } else {
+    const margin = getMarginAtRow(pos.y);
+    pos.x = Math.max(margin + radius, Math.min(mw - margin - radius, pos.x));
+  }
 }
 
 /** Check if a point is inside an HQ ellipse (with padding). */
@@ -1320,10 +1391,14 @@ function isInsideAnyHQ(_x: number, _y: number, _pad: number): boolean {
 }
 
 /** Check if a point is inside an unmined gold cell in the diamond. */
-function isInsideUnminedDiamond(x: number, y: number, pad: number, cells: GoldCell[]): boolean {
+function isInsideUnminedDiamond(x: number, y: number, pad: number, cells: GoldCell[], mapDef?: MapDef): boolean {
   // Quick bounding diamond check first
-  const dx = Math.abs(x - DIAMOND_CENTER_X) / (DIAMOND_HALF_W + pad);
-  const dy = Math.abs(y - DIAMOND_CENTER_Y) / (DIAMOND_HALF_H + pad);
+  const dcx = mapDef?.diamondCenter.x ?? DIAMOND_CENTER_X;
+  const dcy = mapDef?.diamondCenter.y ?? DIAMOND_CENTER_Y;
+  const dhw = mapDef?.diamondHalfW ?? DIAMOND_HALF_W;
+  const dhh = mapDef?.diamondHalfH ?? DIAMOND_HALF_H;
+  const dx = Math.abs(x - dcx) / (dhw + pad);
+  const dy = Math.abs(y - dcy) / (dhh + pad);
   if (dx + dy > 1.1) return false; // outside diamond shape entirely
 
   // Check actual cells near this position
@@ -1348,18 +1423,18 @@ function isInsideUnminedDiamond(x: number, y: number, pad: number, cells: GoldCe
 }
 
 /** Check if a position is blocked by any solid obstacle (HQ or unmined diamond cells). */
-function isBlocked(x: number, y: number, pad: number, cells: GoldCell[]): boolean {
-  return isInsideAnyHQ(x, y, pad) || isInsideUnminedDiamond(x, y, pad, cells);
+function isBlocked(x: number, y: number, pad: number, cells: GoldCell[], mapDef?: MapDef): boolean {
+  return isInsideAnyHQ(x, y, pad) || isInsideUnminedDiamond(x, y, pad, cells, mapDef);
 }
 
 /**
  * Returns the center of the nearest blocking obstacle, or null if none.
  * Used for steering around obstacles.
  */
-function getNearestObstacleCenter(x: number, y: number, pad: number, cells: GoldCell[]): { cx: number; cy: number } | null {
+function getNearestObstacleCenter(x: number, y: number, pad: number, cells: GoldCell[], mapDef?: MapDef): { cx: number; cy: number } | null {
   // Check HQs
-  const hqB = getHQPosition(Team.Bottom);
-  const hqT = getHQPosition(Team.Top);
+  const hqB = getHQPosition(Team.Bottom, mapDef);
+  const hqT = getHQPosition(Team.Top, mapDef);
   if (isInsideHQEllipse(x, y, hqB.x, hqB.y, HQ_WIDTH, HQ_HEIGHT, pad)) {
     return { cx: hqB.x + HQ_WIDTH / 2, cy: hqB.y + HQ_HEIGHT / 2 };
   }
@@ -1367,12 +1442,16 @@ function getNearestObstacleCenter(x: number, y: number, pad: number, cells: Gold
     return { cx: hqT.x + HQ_WIDTH / 2, cy: hqT.y + HQ_HEIGHT / 2 };
   }
   // Check diamond — treat entire diamond shape as one obstacle with its center
-  const ddx = Math.abs(x - DIAMOND_CENTER_X) / (DIAMOND_HALF_W + pad);
-  const ddy = Math.abs(y - DIAMOND_CENTER_Y) / (DIAMOND_HALF_H + pad);
+  const dcx = mapDef?.diamondCenter.x ?? DIAMOND_CENTER_X;
+  const dcy = mapDef?.diamondCenter.y ?? DIAMOND_CENTER_Y;
+  const dhw = mapDef?.diamondHalfW ?? DIAMOND_HALF_W;
+  const dhh = mapDef?.diamondHalfH ?? DIAMOND_HALF_H;
+  const ddx = Math.abs(x - dcx) / (dhw + pad);
+  const ddy = Math.abs(y - dcy) / (dhh + pad);
   if (ddx + ddy < 1.2) {
     // Near the diamond — check if actually blocked by unmined cells
-    if (isInsideUnminedDiamond(x, y, pad, cells)) {
-      return { cx: DIAMOND_CENTER_X, cy: DIAMOND_CENTER_Y };
+    if (isInsideUnminedDiamond(x, y, pad, cells, mapDef)) {
+      return { cx: dcx, cy: dcy };
     }
   }
   return null;
@@ -1382,7 +1461,7 @@ function getNearestObstacleCenter(x: number, y: number, pad: number, cells: Gold
  * Move pos toward (tx, ty) by up to `step` tiles, steering around obstacles.
  * If direct path is blocked, steers tangent to the obstacle surface.
  */
-function moveWithSlide(pos: { x: number; y: number }, tx: number, ty: number, step: number, diamondCells: GoldCell[] = []): void {
+function moveWithSlide(pos: { x: number; y: number }, tx: number, ty: number, step: number, diamondCells: GoldCell[] = [], mapDef?: MapDef): void {
   const dx = tx - pos.x;
   const dy = ty - pos.y;
   const dist = Math.sqrt(dx * dx + dy * dy);
@@ -1396,14 +1475,14 @@ function moveWithSlide(pos: { x: number; y: number }, tx: number, ty: number, st
   // Try full move
   const nx = pos.x + mx;
   const ny = pos.y + my;
-  if (!isBlocked(nx, ny, pad, diamondCells)) {
+  if (!isBlocked(nx, ny, pad, diamondCells, mapDef)) {
     pos.x = nx;
     pos.y = ny;
     return;
   }
 
   // Blocked — find obstacle center and steer tangent to it
-  const obstacle = getNearestObstacleCenter(nx, ny, pad, diamondCells);
+  const obstacle = getNearestObstacleCenter(nx, ny, pad, diamondCells, mapDef);
   if (obstacle) {
     // Vector from obstacle center to unit
     const fromCx = pos.x - obstacle.cx;
@@ -1419,7 +1498,7 @@ function moveWithSlide(pos: { x: number; y: number }, tx: number, ty: number, st
       const steerY = dot1 >= 0 ? perpY1 : -perpY1;
       const sx = pos.x + steerX * step;
       const sy = pos.y + steerY * step;
-      if (!isBlocked(sx, sy, pad, diamondCells)) {
+      if (!isBlocked(sx, sy, pad, diamondCells, mapDef)) {
         pos.x = sx;
         pos.y = sy;
         return;
@@ -1430,7 +1509,7 @@ function moveWithSlide(pos: { x: number; y: number }, tx: number, ty: number, st
       const bLen = Math.sqrt(blendX * blendX + blendY * blendY) || 1;
       const bx = pos.x + (blendX / bLen) * step;
       const by = pos.y + (blendY / bLen) * step;
-      if (!isBlocked(bx, by, pad, diamondCells)) {
+      if (!isBlocked(bx, by, pad, diamondCells, mapDef)) {
         pos.x = bx;
         pos.y = by;
         return;
@@ -1439,12 +1518,12 @@ function moveWithSlide(pos: { x: number; y: number }, tx: number, ty: number, st
   }
 
   // Fallback: try X-only slide
-  if (!isBlocked(pos.x + mx, pos.y, pad, diamondCells)) {
+  if (!isBlocked(pos.x + mx, pos.y, pad, diamondCells, mapDef)) {
     pos.x += mx;
     return;
   }
   // Fallback: try Y-only slide
-  if (!isBlocked(pos.x, pos.y + my, pad, diamondCells)) {
+  if (!isBlocked(pos.x, pos.y + my, pad, diamondCells, mapDef)) {
     pos.y += my;
     return;
   }
@@ -1465,7 +1544,7 @@ function tickUnitCollision(state: GameState): void {
       pushOutFromPoint(unit, cell.tileX + 0.5, cell.tileY + 0.5, COLLISION_GOLD_CELL_RADIUS);
     }
 
-    clampToArenaBounds(unit, 0.35);
+    clampToArenaBounds(unit, 0.35, state.mapDef);
   }
 }
 
@@ -1506,8 +1585,8 @@ function tickCombat(state: GameState): void {
         if (dist > unit.range && dist > 0.001) {
           const movePerTick = getEffectiveSpeed(unit) / TICK_RATE;
           const step = Math.min(movePerTick, dist - unit.range);
-          moveWithSlide(unit, target.x, target.y, step, state.diamondCells);
-          clampToArenaBounds(unit, 0.35);
+          moveWithSlide(unit, target.x, target.y, step, state.diamondCells, state.mapDef);
+          clampToArenaBounds(unit, 0.35, state.mapDef);
         }
       }
     }
@@ -1568,6 +1647,7 @@ function tickCombat(state: GameState): void {
             extraBurnStacks: sp?.extraBurnStacks,
             extraSlowStacks: sp?.extraSlowStacks,
             splashDamagePct: sp?.splashDamagePct,
+            lifestealPct: race === Race.Geists ? 0.2 : undefined,
           });
           // Multishot: extra projectiles at nearby enemies
           const msCount = sp?.multishotCount ?? 0;
@@ -1584,6 +1664,9 @@ function tickCombat(state: GameState): void {
                 targetId: nearby[mi].u.id, damage: msDmg,
                 speed: 15, aoeRadius: 0, team: unit.team,
                 sourcePlayerId: unit.playerId, sourceUnitId: unit.id,
+                extraBurnStacks: sp?.extraBurnStacks,
+                extraSlowStacks: sp?.extraSlowStacks,
+                lifestealPct: race === Race.Geists ? 0.2 : undefined,
               });
             }
           }
@@ -1660,6 +1743,7 @@ function tickCombat(state: GameState): void {
             for (let ci = 0; ci < Math.min(cleaveN, cleaved.length); ci++) {
               const cleaveDmg = Math.round(unit.damage * 0.6);
               dealDamage(state, cleaved[ci], cleaveDmg, cleaveDmg >= 5, unit.playerId, unit.id);
+              applyOnHitEffects(state, unit, cleaved[ci]);
               addCombatEvent(state, { type: 'chain', x: unit.x, y: unit.y, x2: cleaved[ci].x, y2: cleaved[ci].y, color: '#ff9800' });
             }
             if (cleaved.length > 0 && state.rng() < 0.3) {
@@ -1698,7 +1782,7 @@ function tickCombat(state: GameState): void {
     // Attack enemy HQ when in range (instead of auto-damaging at path end).
     if (unit.targetId === null && unit.attackTimer <= 0) {
       const enemyTeam = unit.team === Team.Bottom ? Team.Top : Team.Bottom;
-      const hq = getHQPosition(enemyTeam);
+      const hq = getHQPosition(enemyTeam, state.mapDef);
       const hqCx = hq.x + HQ_WIDTH / 2;
       const hqCy = hq.y + HQ_HEIGHT / 2;
       const hqRadius = Math.max(HQ_WIDTH, HQ_HEIGHT) * 0.5;
@@ -1760,7 +1844,7 @@ function tickHQDefense(state: GameState): void {
   for (const team of [Team.Bottom, Team.Top]) {
     if ((state.tick + team * Math.floor(HQ_COOLDOWN_TICKS / 2)) % HQ_COOLDOWN_TICKS !== 0) continue;
     const enemyTeam = team === Team.Bottom ? Team.Top : Team.Bottom;
-    const hq = getHQPosition(team);
+    const hq = getHQPosition(team, state.mapDef);
     const hx = hq.x + HQ_WIDTH / 2;
     const hy = hq.y + HQ_HEIGHT / 2;
 
@@ -1931,8 +2015,23 @@ function tickProjectiles(state: GameState): void {
         const race = sourcePlayer.race;
         const extraSlow = p.extraSlowStacks ?? 0;
         const extraBurn = p.extraBurnStacks ?? 0;
-        if (race === Race.Deep || race === Race.Tenders || race === Race.Goblins) applyStatus(target, StatusType.Slow, (p.aoeRadius > 0 ? 2 : 1) + extraSlow);
-        if (race === Race.Demon || race === Race.Geists || race === Race.Wild) applyStatus(target, StatusType.Burn, (p.aoeRadius > 0 ? 2 : 1) + extraBurn);
+        // Slow races: Deep always 2 (Harpooner), Tenders 1 or 2
+        if (race === Race.Deep) applyStatus(target, StatusType.Slow, 2 + extraSlow);
+        else if (race === Race.Tenders) applyStatus(target, StatusType.Slow, (p.aoeRadius > 0 ? 2 : 1) + extraSlow);
+        // Burn races: Demon, Geists, Wild, Goblins (Knifer poison)
+        if (race === Race.Demon || race === Race.Geists || race === Race.Wild || race === Race.Goblins)
+          applyStatus(target, StatusType.Burn, (p.aoeRadius > 0 ? 2 : 1) + extraBurn);
+        // Geists Wraith Bow: ranged lifesteal
+        if (p.lifestealPct && p.lifestealPct > 0) {
+          const source = state.units.find(u => u.id === p.sourceUnitId);
+          if (source && source.hp > 0) {
+            const steal = Math.round(p.damage * p.lifestealPct);
+            if (steal > 0) {
+              source.hp = Math.min(source.maxHp, source.hp + steal);
+              addCombatEvent(state, { type: 'lifesteal', x: target.x, y: target.y, x2: source.x, y2: source.y, color: '#b39ddb' });
+            }
+          }
+        }
       }
 
       // AOE damage
@@ -1948,9 +2047,23 @@ function tickProjectiles(state: GameState): void {
               const race = sourcePlayer.race;
               const extraSlow = p.extraSlowStacks ?? 0;
               const extraBurn = p.extraBurnStacks ?? 0;
-              if (race === Race.Deep || race === Race.Tenders || race === Race.Goblins) applyStatus(u, StatusType.Slow, (p.aoeRadius > 0 ? 2 : 1) + extraSlow);
-              if (race === Race.Demon || race === Race.Geists || race === Race.Wild) applyStatus(u, StatusType.Burn, (p.aoeRadius > 0 ? 2 : 1) + extraBurn);
+              // Slow races: Deep always 2, Tenders 2 (AoE)
+              if (race === Race.Deep) applyStatus(u, StatusType.Slow, 2 + extraSlow);
+              else if (race === Race.Tenders) applyStatus(u, StatusType.Slow, 2 + extraSlow);
+              // Burn races
+              if (race === Race.Demon || race === Race.Geists || race === Race.Wild || race === Race.Goblins)
+                applyStatus(u, StatusType.Burn, 2 + extraBurn);
               if (race === Race.Oozlings) applyStatus(u, StatusType.Slow, 1);
+              // AoE lifesteal
+              if (p.lifestealPct && p.lifestealPct > 0) {
+                const source = state.units.find(s => s.id === p.sourceUnitId);
+                if (source && source.hp > 0) {
+                  const steal = Math.round(aoeDmg * p.lifestealPct);
+                  if (steal > 0) {
+                    source.hp = Math.min(source.maxHp, source.hp + steal);
+                  }
+                }
+              }
             }
           }
         }
@@ -2131,7 +2244,7 @@ function applyTowerSpecial(state: GameState, building: BuildingState, race: Race
         towerVisualProjectile(state, building, nearest);
         dealDamage(state, nearest, stats.damage, false, building.playerId);
         if (state.rng() < 0.3) {
-          applyKnockback(nearest, 0.02);
+          applyKnockback(nearest, 0.02, state.mapDef);
           addDeathParticles(state, nearest.x, nearest.y, '#ffab40', 3);
           if (state.rng() < 0.3) addFloatingText(state, nearest.x, nearest.y - 0.3, 'PUSH', '#ffab40');
         }
@@ -2385,7 +2498,7 @@ function tickHarvesters(state: GameState, cellMap: Map<string, GoldCell>): void 
   }
   for (const h of state.harvesters) {
     if (h.state === 'dead') continue;
-    clampToArenaBounds(h, 0.3);
+    clampToArenaBounds(h, 0.3, state.mapDef);
   }
 
   // Remove orphaned harvesters whose huts were destroyed
@@ -2423,32 +2536,32 @@ function tickHarvesters(state: GameState, cellMap: Map<string, GoldCell>): void 
       if (dx * dx + dy * dy <= 25) { shouldFlee = true; break; }
     }
     if (shouldFlee) {
-      const hq = getHQPosition(h.team);
+      const hq = getHQPosition(h.team, state.mapDef);
       const tx = hq.x + HQ_WIDTH / 2, ty = hq.y + HQ_HEIGHT / 2;
       const dx = tx - h.x, dy = ty - h.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
       if (dist > 1) {
         // Flee at 1.5x speed
         const fleeSpeed = movePerTick * 1.5;
-        moveWithSlide(h, tx, ty, fleeSpeed, state.diamondCells);
+        moveWithSlide(h, tx, ty, fleeSpeed, state.diamondCells, state.mapDef);
       }
       // Interrupt mining
       if (h.state === 'mining') {
         h.state = 'walking_to_node';
         h.targetCellIdx = -1;
       }
-      clampToArenaBounds(h, 0.3);
+      clampToArenaBounds(h, 0.3, state.mapDef);
       continue;
     }
 
     if (h.assignment === HarvesterAssignment.Center) {
       tickCenterHarvester(state, h, movePerTick, cellMap);
-      clampToArenaBounds(h, 0.3);
+      clampToArenaBounds(h, 0.3, state.mapDef);
       continue;
     }
 
     if (h.state === 'walking_to_node') {
-      const baseTarget = getResourceNodePosition(h);
+      const baseTarget = getResourceNodePosition(h, state.mapDef);
       const target = findOpenMiningSpot(state, h, baseTarget);
       const dx = target.x - h.x, dy = target.y - h.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
@@ -2456,7 +2569,7 @@ function tickHarvesters(state: GameState, cellMap: Map<string, GoldCell>): void 
         h.state = 'mining';
         h.miningTimer = MINE_TIME_BASE_TICKS;
       } else {
-        moveWithSlide(h, target.x, target.y, movePerTick, state.diamondCells);
+        moveWithSlide(h, target.x, target.y, movePerTick, state.diamondCells, state.mapDef);
       }
     } else if (h.state === 'mining') {
       h.miningTimer--;
@@ -2475,7 +2588,7 @@ function tickHarvesters(state: GameState, cellMap: Map<string, GoldCell>): void 
       walkHome(state, h, movePerTick);
     }
 
-    clampToArenaBounds(h, 0.3);
+    clampToArenaBounds(h, 0.3, state.mapDef);
   }
 }
 
@@ -2506,7 +2619,7 @@ function tickCenterHarvester(state: GameState, h: HarvesterState, movePerTick: n
       }
     } else {
       h.state = 'walking_to_node';
-      moveWithSlide(h, enemyCarrier.x, enemyCarrier.y, movePerTick);
+      moveWithSlide(h, enemyCarrier.x, enemyCarrier.y, movePerTick, [], state.mapDef);
     }
     return;
   }
@@ -2542,7 +2655,7 @@ function tickCenterHarvester(state: GameState, h: HarvesterState, movePerTick: n
       }
     } else {
       h.state = 'walking_to_node';
-      moveWithSlide(h, targetX, targetY, movePerTick);
+      moveWithSlide(h, targetX, targetY, movePerTick, [], state.mapDef);
     }
     return;
   }
@@ -2582,12 +2695,12 @@ function tickCenterHarvester(state: GameState, h: HarvesterState, movePerTick: n
     h.miningTimer = MINE_TIME_BASE_TICKS;
   } else {
     h.state = 'walking_to_node';
-    moveWithSlide(h, cell.tileX, cell.tileY, movePerTick);
+    moveWithSlide(h, cell.tileX, cell.tileY, movePerTick, [], state.mapDef);
   }
 }
 
 function walkHome(state: GameState, h: HarvesterState, movePerTick: number): void {
-  const hq = getHQPosition(h.team);
+  const hq = getHQPosition(h.team, state.mapDef);
   const tx = hq.x + HQ_WIDTH / 2, ty = hq.y + HQ_HEIGHT / 2;
   const dx = tx - h.x, dy = ty - h.y;
   const dist = Math.sqrt(dx * dx + dy * dy);
@@ -2622,18 +2735,28 @@ function walkHome(state: GameState, h: HarvesterState, movePerTick: number): voi
   }
 }
 
-function getResourceNodePosition(h: HarvesterState): { x: number; y: number } {
+function getResourceNodePosition(h: HarvesterState, mapDef?: MapDef): { x: number; y: number } {
+  const dc = mapDef?.diamondCenter ?? { x: DIAMOND_CENTER_X, y: DIAMOND_CENTER_Y };
   switch (h.assignment) {
     case HarvesterAssignment.BaseGold: {
-      const hq = getHQPosition(h.team);
+      const hq = getHQPosition(h.team, mapDef);
+      // Gold mine is near HQ — offset along the lane axis
+      if (mapDef?.shapeAxis === 'x') {
+        // Landscape: offset in X (toward center)
+        return { x: h.team === Team.Bottom ? hq.x + HQ_WIDTH + 6 : hq.x - 6, y: hq.y + HQ_HEIGHT / 2 };
+      }
       return { x: hq.x + HQ_WIDTH / 2, y: h.team === Team.Bottom ? hq.y - 6 : hq.y + HQ_HEIGHT + 6 };
     }
-    case HarvesterAssignment.Wood:
-      return { x: WOOD_NODE_X, y: DIAMOND_CENTER_Y };
-    case HarvesterAssignment.Stone:
-      return { x: STONE_NODE_X, y: DIAMOND_CENTER_Y };
+    case HarvesterAssignment.Wood: {
+      const node = mapDef?.resourceNodes.find(n => n.type === ResourceType.Wood);
+      return node ? { x: node.x, y: node.y } : { x: WOOD_NODE_X, y: DIAMOND_CENTER_Y };
+    }
+    case HarvesterAssignment.Stone: {
+      const node = mapDef?.resourceNodes.find(n => n.type === ResourceType.Stone);
+      return node ? { x: node.x, y: node.y } : { x: STONE_NODE_X, y: DIAMOND_CENTER_Y };
+    }
     case HarvesterAssignment.Center:
-      return { x: DIAMOND_CENTER_X, y: DIAMOND_CENTER_Y };
+      return { x: dc.x, y: dc.y };
   }
 }
 
@@ -2670,12 +2793,17 @@ function checkWinConditions(state: GameState): void {
   if (state.matchPhase === 'ended') return;
   const humanPlayer = state.players.find(p => !p.isBot);
   const humanTeam = humanPlayer?.team ?? Team.Bottom;
-  if (state.hqHp[Team.Bottom] <= 0) {
-    state.winner = Team.Top; state.winCondition = 'military'; state.matchPhase = 'ended';
-    addSound(state, humanTeam === Team.Top ? 'match_end_win' : 'match_end_lose');
-  } else if (state.hqHp[Team.Top] <= 0) {
-    state.winner = Team.Bottom; state.winCondition = 'military'; state.matchPhase = 'ended';
-    addSound(state, humanTeam === Team.Bottom ? 'match_end_win' : 'match_end_lose');
+  // Check each team's HQ — first team to reach 0 HP loses
+  for (let t = 0; t < state.hqHp.length; t++) {
+    if (state.hqHp[t] <= 0) {
+      // Winner is the other team (for 2-team games)
+      const winnerTeam = t === Team.Bottom ? Team.Top : Team.Bottom;
+      state.winner = winnerTeam;
+      state.winCondition = 'military';
+      state.matchPhase = 'ended';
+      addSound(state, humanTeam === winnerTeam ? 'match_end_win' : 'match_end_lose');
+      return;
+    }
   }
 }
 
@@ -2687,8 +2815,7 @@ export function computeStateHash(state: GameState): number {
   const mix = (v: number) => { h ^= v; h = Math.imul(h, 0x01000193); };
 
   mix(state.tick);
-  mix(state.hqHp[0] * 1000 | 0);
-  mix(state.hqHp[1] * 1000 | 0);
+  for (const hp of state.hqHp) mix(hp * 1000 | 0);
   mix(state.units.length);
   mix(state.buildings.length);
   mix(state.projectiles.length);

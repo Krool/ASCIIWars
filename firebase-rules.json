@@ -78,9 +78,13 @@
 
     "games": {
       "$code": {
-        // Anyone authenticated who knows the code can read/write game data
+        // Anyone authenticated who knows the code can read game data
         // The 5-char party code acts as a shared secret
         ".read": "auth != null",
+
+        // Allow deleting the entire game node (cleanup after match)
+        // Creation/updates are handled by child rules
+        ".write": "auth != null && !newData.exists()",
 
         "ready": {
           "$slot": {

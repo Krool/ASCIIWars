@@ -127,17 +127,35 @@ interface WeatherDrop {
   y: number;
   speed: number;
   size: number;
-  drift: number; // horizontal movement
+  drift: number;
   alpha: number;
+  layer: number; // 0=far, 1=mid, 2=near (depth)
+  phase: number; // per-drop phase for snow flutter
+}
+
+interface RainSplash {
+  x: number;
+  y: number;
+  age: number;
+  maxAge: number;
+  size: number;
 }
 
 export class WeatherSystem {
   type: WeatherType = 'clear';
   private drops: WeatherDrop[] = [];
+  private splashes: RainSplash[] = [];
   private transitionAlpha = 0;
   private targetAlpha = 0;
   private nextChangeTime = 0;
   private fogPhase = 0;
+  private windStrength = 0;
+  private windTarget = 0;
+  private lightningFlash = 0; // 0-1 flash intensity, decays rapidly
+  private lightningCooldown = 0;
+  /** Set by Renderer to match current map dimensions (in tiles). */
+  mapW = MAP_WIDTH;
+  mapH = MAP_HEIGHT;
 
   /** Call once per frame with dt in seconds */
   update(dt: number, elapsedSec: number, dayPhase: number): void {
@@ -148,26 +166,36 @@ export class WeatherSystem {
     }
 
     // Smooth transition
-    if (this.type === 'clear') {
-      this.targetAlpha = 0;
-    } else {
-      this.targetAlpha = 1;
-    }
+    this.targetAlpha = this.type === 'clear' ? 0 : 1;
     this.transitionAlpha += (this.targetAlpha - this.transitionAlpha) * dt * 2;
 
-    if (this.type === 'fog') {
-      this.fogPhase += dt * 0.3;
-    }
+    // Wind gusts — slowly drift toward random targets
+    if (Math.random() < dt * 0.3) this.windTarget = (Math.random() - 0.5) * 60;
+    this.windStrength += (this.windTarget - this.windStrength) * dt * 0.8;
 
-    // Update drops
-    if (this.type === 'rain' || this.type === 'snow') {
-      this.updateDrops(dt);
+    if (this.type === 'fog') this.fogPhase += dt * 0.3;
+    if (this.type === 'rain' || this.type === 'snow') this.updateDrops(dt);
+
+    // Lightning during rain
+    if (this.type === 'rain') {
+      this.lightningCooldown -= dt;
+      if (this.lightningCooldown <= 0 && Math.random() < dt * 0.08) {
+        this.lightningFlash = 0.8 + Math.random() * 0.2;
+        this.lightningCooldown = 3 + Math.random() * 8;
+      }
     }
+    if (this.lightningFlash > 0) this.lightningFlash = Math.max(0, this.lightningFlash - dt * 6);
+
+    // Update splashes
+    for (let i = this.splashes.length - 1; i >= 0; i--) {
+      this.splashes[i].age += dt;
+      if (this.splashes[i].age >= this.splashes[i].maxAge) this.splashes.splice(i, 1);
+    }
+    if (this.splashes.length > 200) this.splashes.length = 200;
   }
 
   private pickWeather(dayPhase: number): void {
     const rand = Math.random();
-    // Night has more chance of fog
     if (dayPhase > 0.5 && dayPhase < 0.95) {
       if (rand < 0.3) this.type = 'fog';
       else if (rand < 0.5) this.type = 'rain';
@@ -178,39 +206,66 @@ export class WeatherSystem {
       else if (rand < 0.28) this.type = 'fog';
       else this.type = 'clear';
     }
-    // Spawn or clear drops
     if (this.type === 'rain' || this.type === 'snow') {
       this.drops = [];
-      this.spawnDrops(this.type === 'rain' ? 200 : 120);
+      this.splashes = [];
+      this.spawnDrops(this.type === 'rain' ? 600 : 300);
     } else {
       this.drops = [];
+      this.splashes = [];
     }
   }
 
   private spawnDrops(count: number): void {
-    const worldW = MAP_WIDTH * T;
-    const worldH = MAP_HEIGHT * T;
+    const worldW = this.mapW * T;
+    const worldH = this.mapH * T;
+    const isRain = this.type === 'rain';
     for (let i = 0; i < count; i++) {
+      const layer = i < count * 0.3 ? 0 : i < count * 0.7 ? 1 : 2;
+      const depthScale = 0.5 + layer * 0.25; // 0.5, 0.75, 1.0
       this.drops.push({
-        x: Math.random() * worldW * 1.2 - worldW * 0.1,
+        x: Math.random() * worldW * 1.3 - worldW * 0.15,
         y: Math.random() * worldH,
-        speed: this.type === 'rain' ? 300 + Math.random() * 200 : 20 + Math.random() * 30,
-        size: this.type === 'rain' ? 1 + Math.random() * 2 : 2 + Math.random() * 2,
-        drift: this.type === 'rain' ? -30 + Math.random() * 10 : -10 + Math.random() * 20,
-        alpha: 0.3 + Math.random() * 0.4,
+        speed: isRain
+          ? (250 + Math.random() * 200) * depthScale
+          : (15 + Math.random() * 25) * depthScale,
+        size: isRain
+          ? (0.8 + Math.random() * 1.5) * depthScale
+          : (1.5 + Math.random() * 2.5) * depthScale,
+        drift: isRain
+          ? -40 + Math.random() * 15
+          : (Math.random() - 0.5) * 15,
+        alpha: (0.2 + Math.random() * 0.4) * depthScale,
+        layer,
+        phase: Math.random() * Math.PI * 2,
       });
     }
   }
 
   private updateDrops(dt: number): void {
-    const worldH = MAP_HEIGHT * T;
-    const worldW = MAP_WIDTH * T;
+    const worldH = this.mapH * T;
+    const worldW = this.mapW * T;
+    const isRain = this.type === 'rain';
     for (const d of this.drops) {
       d.y += d.speed * dt;
-      d.x += d.drift * dt;
+      // Wind affects all drops, more for near layers
+      const windEffect = this.windStrength * (0.5 + d.layer * 0.25);
+      d.x += (d.drift + windEffect) * dt;
+      // Snow flutter: gentle sine-wave sway
+      if (!isRain) {
+        d.x += Math.sin(d.phase + d.y * 0.008) * 12 * dt;
+      }
       if (d.y > worldH) {
-        d.y = -10;
-        d.x = Math.random() * worldW * 1.2 - worldW * 0.1;
+        // Rain splash on ground
+        if (isRain && d.layer >= 1 && Math.random() < 0.3) {
+          this.splashes.push({
+            x: d.x, y: worldH - Math.random() * 20,
+            age: 0, maxAge: 0.15 + Math.random() * 0.1,
+            size: d.size * 1.5,
+          });
+        }
+        d.y = -10 - Math.random() * 40;
+        d.x = Math.random() * worldW * 1.3 - worldW * 0.15;
       }
     }
   }
@@ -218,43 +273,73 @@ export class WeatherSystem {
   /** Draw weather effects onto the world-space canvas (camera-transformed) */
   drawWorld(ctx: CanvasRenderingContext2D): void {
     if (this.transitionAlpha < 0.01) return;
+    const ta = this.transitionAlpha;
 
     if (this.type === 'rain') {
-      ctx.globalAlpha = this.transitionAlpha * 0.5;
-      ctx.strokeStyle = 'rgba(180, 200, 255, 0.6)';
-      ctx.lineWidth = 1;
-      for (const d of this.drops) {
+      // Rain streaks — layered for depth
+      for (let layer = 0; layer < 3; layer++) {
+        const layerAlpha = [0.2, 0.35, 0.5][layer];
+        ctx.globalAlpha = ta * layerAlpha;
+        ctx.lineWidth = [0.5, 1, 1.5][layer];
+        ctx.strokeStyle = `rgba(180, 200, 255, ${[0.4, 0.5, 0.7][layer]})`;
         ctx.beginPath();
-        ctx.moveTo(d.x, d.y);
-        ctx.lineTo(d.x + d.drift * 0.03, d.y - d.size * 6);
+        for (const d of this.drops) {
+          if (d.layer !== layer) continue;
+          const len = d.size * [4, 6, 8][layer];
+          ctx.moveTo(d.x, d.y);
+          ctx.lineTo(d.x + (d.drift + this.windStrength) * 0.025, d.y - len);
+        }
         ctx.stroke();
+      }
+      // Splashes
+      if (this.splashes.length > 0) {
+        ctx.globalAlpha = ta * 0.4;
+        ctx.strokeStyle = 'rgba(200, 220, 255, 0.6)';
+        ctx.lineWidth = 0.5;
+        for (const s of this.splashes) {
+          const t = s.age / s.maxAge;
+          const r = s.size * (1 + t * 3);
+          ctx.beginPath();
+          ctx.arc(s.x, s.y, r, Math.PI * 1.15, Math.PI * 1.85);
+          ctx.stroke();
+        }
       }
       ctx.globalAlpha = 1;
     }
 
     if (this.type === 'snow') {
-      ctx.globalAlpha = this.transitionAlpha * 0.7;
-      ctx.fillStyle = '#fff';
-      for (const d of this.drops) {
+      for (let layer = 0; layer < 3; layer++) {
+        const layerAlpha = [0.3, 0.5, 0.7][layer];
+        ctx.globalAlpha = ta * layerAlpha;
+        ctx.fillStyle = layer < 2 ? 'rgba(220, 230, 245, 0.8)' : '#fff';
         ctx.beginPath();
-        ctx.arc(d.x, d.y, d.size, 0, Math.PI * 2);
+        for (const d of this.drops) {
+          if (d.layer !== layer) continue;
+          ctx.moveTo(d.x + d.size, d.y);
+          ctx.arc(d.x, d.y, d.size, 0, Math.PI * 2);
+        }
         ctx.fill();
       }
       ctx.globalAlpha = 1;
     }
 
     if (this.type === 'fog') {
-      // Sweeping fog bands across the map
-      const worldW = MAP_WIDTH * T;
-      const worldH = MAP_HEIGHT * T;
-      ctx.globalAlpha = this.transitionAlpha * 0.15;
-      for (let i = 0; i < 5; i++) {
-        const bandY = (worldH * 0.15 * i + this.fogPhase * worldH * 0.1) % worldH;
-        const bandH = worldH * 0.08;
+      const worldW = this.mapW * T;
+      const worldH = this.mapH * T;
+      // Multiple overlapping fog layers at different speeds/heights
+      for (let i = 0; i < 8; i++) {
+        const speed = [0.07, -0.05, 0.09, -0.04, 0.06, -0.08, 0.03, -0.06][i];
+        const baseY = worldH * (i * 0.13 + 0.02);
+        const wrapH = worldH * 1.2;
+        const bandY = ((baseY + this.fogPhase * worldH * speed) % wrapH + wrapH) % wrapH - worldH * 0.1;
+        const bandH = worldH * (0.1 + (i % 3) * 0.04);
+        const layerAlpha = ta * [0.08, 0.12, 0.06, 0.1, 0.09, 0.07, 0.11, 0.05][i];
+        ctx.globalAlpha = layerAlpha;
         const grad = ctx.createLinearGradient(0, bandY, 0, bandY + bandH);
-        grad.addColorStop(0, 'rgba(200, 210, 220, 0)');
-        grad.addColorStop(0.5, 'rgba(200, 210, 220, 1)');
-        grad.addColorStop(1, 'rgba(200, 210, 220, 0)');
+        grad.addColorStop(0, 'rgba(190, 200, 215, 0)');
+        grad.addColorStop(0.3, 'rgba(200, 210, 220, 1)');
+        grad.addColorStop(0.7, 'rgba(195, 205, 218, 1)');
+        grad.addColorStop(1, 'rgba(190, 200, 215, 0)');
         ctx.fillStyle = grad;
         ctx.fillRect(0, bandY, worldW, bandH);
       }
@@ -262,11 +347,24 @@ export class WeatherSystem {
     }
   }
 
-  /** Draw screen-space weather overlay (rain splatter on "lens") */
+  /** Draw screen-space weather overlay */
   drawOverlay(ctx: CanvasRenderingContext2D, w: number, h: number): void {
-    if (this.type === 'rain' && this.transitionAlpha > 0.1) {
-      // Subtle blue-grey wash
-      ctx.fillStyle = `rgba(100, 120, 150, ${0.04 * this.transitionAlpha})`;
+    const ta = this.transitionAlpha;
+    // Lightning flash — bright white overlay that decays fast
+    if (this.lightningFlash > 0.01) {
+      ctx.fillStyle = `rgba(220, 230, 255, ${this.lightningFlash * 0.25})`;
+      ctx.fillRect(0, 0, w, h);
+    }
+    if (this.type === 'rain' && ta > 0.1) {
+      ctx.fillStyle = `rgba(80, 100, 130, ${0.07 * ta})`;
+      ctx.fillRect(0, 0, w, h);
+    }
+    if (this.type === 'snow' && ta > 0.1) {
+      ctx.fillStyle = `rgba(200, 210, 230, ${0.04 * ta})`;
+      ctx.fillRect(0, 0, w, h);
+    }
+    if (this.type === 'fog' && ta > 0.1) {
+      ctx.fillStyle = `rgba(180, 190, 210, ${0.06 * ta})`;
       ctx.fillRect(0, 0, w, h);
     }
   }
@@ -285,32 +383,39 @@ interface AmbientParticle {
   age: number;
   maxAge: number;
   color: string;
-  type: 'dust' | 'ember' | 'leaf' | 'sparkle';
+  color2?: string; // secondary color for glow/shimmer
+  type: 'dust' | 'ember' | 'leaf' | 'sparkle' | 'mote' | 'wisp' | 'bubble';
+  phase: number; // per-particle phase for wobble/shimmer
+  spin: number;  // rotation speed for leaves
 }
 
 export class AmbientParticles {
   private particles: AmbientParticle[] = [];
   private spawnAcc = 0;
 
-  /** Spawn ambient particles near combat areas, resource nodes, and bases */
+  /** Spawn ambient particles near combat areas */
   update(dt: number, combatZones: { x: number; y: number }[]): void {
     this.spawnAcc += dt;
 
-    // Spawn dust near combat
-    if (this.spawnAcc > 0.15 && combatZones.length > 0) {
+    // Spawn dust near combat — more frequently, bigger clouds
+    if (this.spawnAcc > 0.08 && combatZones.length > 0) {
       this.spawnAcc = 0;
       const zone = combatZones[Math.floor(Math.random() * combatZones.length)];
-      this.particles.push({
-        x: zone.x * T + (Math.random() - 0.5) * T * 3,
-        y: zone.y * T + (Math.random() - 0.5) * T * 2,
-        vx: (Math.random() - 0.5) * 15,
-        vy: -5 - Math.random() * 15,
-        size: 1 + Math.random() * 1.5,
-        alpha: 0, maxAlpha: 0.3 + Math.random() * 0.3,
-        age: 0, maxAge: 0.8 + Math.random() * 0.6,
-        color: '#c8b090',
-        type: 'dust',
-      });
+      // Spawn 2-3 dust motes per burst
+      const count = 2 + Math.floor(Math.random() * 2);
+      for (let i = 0; i < count; i++) {
+        this.particles.push({
+          x: zone.x * T + (Math.random() - 0.5) * T * 4,
+          y: zone.y * T + (Math.random() - 0.5) * T * 2,
+          vx: (Math.random() - 0.5) * 20,
+          vy: -8 - Math.random() * 18,
+          size: 1.5 + Math.random() * 2,
+          alpha: 0, maxAlpha: 0.25 + Math.random() * 0.2,
+          age: 0, maxAge: 0.6 + Math.random() * 0.6,
+          color: Math.random() > 0.5 ? '#c8b090' : '#b8a078',
+          type: 'dust', phase: 0, spin: 0,
+        });
+      }
     }
 
     // Update
@@ -318,84 +423,289 @@ export class AmbientParticles {
       const p = this.particles[i];
       p.age += dt;
       if (p.age >= p.maxAge) { this.particles.splice(i, 1); continue; }
-      p.x += p.vx * dt;
-      p.y += p.vy * dt;
+
+      // Type-specific movement
+      if (p.type === 'leaf') {
+        // Flutter: sinusoidal drift + slow spin
+        p.x += (p.vx + Math.sin(p.phase + p.age * 3.5) * 18) * dt;
+        p.y += (p.vy + Math.cos(p.phase + p.age * 2.1) * 5) * dt;
+      } else if (p.type === 'bubble') {
+        // Rise with wobble
+        p.x += (p.vx + Math.sin(p.phase + p.age * 4) * 10) * dt;
+        p.y += p.vy * dt;
+      } else if (p.type === 'wisp') {
+        // Erratic drift
+        p.x += (p.vx + Math.sin(p.phase + p.age * 5) * 15) * dt;
+        p.y += (p.vy + Math.cos(p.phase + p.age * 3) * 8) * dt;
+      } else {
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+      }
+
       // Fade in then out
       const life = p.age / p.maxAge;
-      p.alpha = life < 0.2 ? (life / 0.2) * p.maxAlpha
-        : p.maxAlpha * (1 - (life - 0.2) / 0.8);
+      p.alpha = life < 0.15 ? (life / 0.15) * p.maxAlpha
+        : p.maxAlpha * (1 - (life - 0.15) / 0.85);
     }
 
     // Cap
-    if (this.particles.length > 150) this.particles.length = 150;
+    if (this.particles.length > 200) this.particles.length = 200;
   }
 
-  /** Spawn embers for Demon race, leaves for Wild/Tenders */
+  /** Spawn race-themed ambient particles near units — all 9 races */
   spawnRaceParticle(x: number, y: number, race: Race): void {
-    if (this.particles.length > 120) return;
-    if (Math.random() > 0.008) return; // ~0.8% chance per unit per frame
+    if (this.particles.length > 160) return;
+    if (Math.random() > 0.012) return; // ~1.2% chance per unit per frame
 
-    let color: string;
-    let type: AmbientParticle['type'];
-    let vy: number;
+    const px = x * T + (Math.random() - 0.5) * T * 2;
+    const py = y * T;
+    const base = {
+      x: px, y: py,
+      vx: (Math.random() - 0.5) * 20,
+      alpha: 0, maxAlpha: 0.5 + Math.random() * 0.3,
+      age: 0, maxAge: 0.6 + Math.random() * 0.8,
+      phase: Math.random() * Math.PI * 2,
+      spin: 0,
+    };
 
     switch (race) {
       case Race.Demon:
-        color = Math.random() > 0.5 ? '#ff6600' : '#ff3300';
-        type = 'ember';
-        vy = -20 - Math.random() * 30;
+        this.particles.push({
+          ...base,
+          vy: -25 - Math.random() * 30,
+          size: 1.5 + Math.random() * 2,
+          color: Math.random() > 0.5 ? '#ff6600' : '#ff3300',
+          color2: '#ff990044',
+          type: 'ember',
+        });
         break;
       case Race.Wild:
+        this.particles.push({
+          ...base,
+          vy: 8 + Math.random() * 12,
+          vx: (Math.random() - 0.5) * 25,
+          size: 2 + Math.random() * 2,
+          color: ['#4a7a2a', '#6a9a3a', '#5a8a30', '#3a6a22'][Math.floor(Math.random() * 4)],
+          type: 'leaf', spin: (Math.random() - 0.5) * 4,
+          maxAge: 1.0 + Math.random() * 1.0,
+        });
+        break;
       case Race.Tenders:
-        color = Math.random() > 0.5 ? '#4a7a2a' : '#6a9a3a';
-        type = 'leaf';
-        vy = 5 + Math.random() * 10;
+        this.particles.push({
+          ...base,
+          vy: 6 + Math.random() * 8,
+          vx: (Math.random() - 0.5) * 15,
+          size: 1.5 + Math.random() * 1.5,
+          color: Math.random() > 0.6 ? '#88cc55' : '#a8e070',
+          type: 'leaf', spin: (Math.random() - 0.5) * 3,
+          maxAge: 0.8 + Math.random() * 0.8,
+        });
         break;
       case Race.Deep:
-        color = 'rgba(100, 180, 255, 0.7)';
-        type = 'sparkle';
-        vy = -5 - Math.random() * 10;
+        this.particles.push({
+          ...base,
+          vy: -8 - Math.random() * 12,
+          size: 1.5 + Math.random() * 1.5,
+          color: '#64b5f6',
+          color2: '#90caf9',
+          type: 'sparkle',
+        });
         break;
       case Race.Geists:
-        color = 'rgba(180, 160, 255, 0.6)';
-        type = 'sparkle';
-        vy = -10 - Math.random() * 15;
+        this.particles.push({
+          ...base,
+          vy: -12 - Math.random() * 18,
+          size: 1.5 + Math.random() * 2,
+          color: '#b39ddb',
+          color2: '#d1c4e9',
+          type: 'sparkle',
+        });
+        break;
+      case Race.Crown:
+        // Golden motes — drift upward slowly
+        this.particles.push({
+          ...base,
+          vy: -6 - Math.random() * 8,
+          size: 1 + Math.random() * 1.5,
+          color: '#ffd54f',
+          color2: '#fff8e1',
+          type: 'mote',
+          maxAlpha: 0.4 + Math.random() * 0.3,
+        });
+        break;
+      case Race.Horde:
+        // Dust and sparks — kicked up from heavy footsteps
+        this.particles.push({
+          ...base,
+          vy: -10 - Math.random() * 15,
+          vx: (Math.random() - 0.5) * 30,
+          size: 1.5 + Math.random() * 2,
+          color: Math.random() > 0.6 ? '#ff8a65' : '#a1887f',
+          type: 'dust',
+          maxAlpha: 0.35 + Math.random() * 0.2,
+        });
+        break;
+      case Race.Goblins:
+        // Toxic green wisps — erratic movement
+        this.particles.push({
+          ...base,
+          vy: -8 - Math.random() * 12,
+          size: 1 + Math.random() * 1.5,
+          color: Math.random() > 0.5 ? '#76ff03' : '#ccff90',
+          color2: '#69f0ae44',
+          type: 'wisp',
+          maxAge: 0.5 + Math.random() * 0.5,
+        });
+        break;
+      case Race.Oozlings:
+        // Bubbles — rise and pop
+        this.particles.push({
+          ...base,
+          vy: -15 - Math.random() * 20,
+          vx: (Math.random() - 0.5) * 10,
+          size: 2 + Math.random() * 3,
+          color: Math.random() > 0.5 ? '#80deea' : '#b2ebf2',
+          type: 'bubble',
+          maxAlpha: 0.35 + Math.random() * 0.25,
+          maxAge: 0.5 + Math.random() * 0.6,
+        });
         break;
       default:
         return;
     }
-
-    this.particles.push({
-      x: x * T + (Math.random() - 0.5) * T * 2,
-      y: y * T,
-      vx: (Math.random() - 0.5) * 20,
-      vy,
-      size: 1 + Math.random() * 1.5,
-      alpha: 0, maxAlpha: 0.4 + Math.random() * 0.3,
-      age: 0, maxAge: 0.5 + Math.random() * 0.8,
-      color,
-      type,
-    });
   }
 
   draw(ctx: CanvasRenderingContext2D): void {
     for (const p of this.particles) {
       ctx.globalAlpha = p.alpha;
-      ctx.fillStyle = p.color;
-      if (p.type === 'sparkle') {
-        // Small diamond shape
-        const s = p.size;
-        ctx.beginPath();
-        ctx.moveTo(p.x, p.y - s);
-        ctx.lineTo(p.x + s * 0.6, p.y);
-        ctx.lineTo(p.x, p.y + s);
-        ctx.lineTo(p.x - s * 0.6, p.y);
-        ctx.closePath();
-        ctx.fill();
-      } else {
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-        ctx.fill();
+
+      switch (p.type) {
+        case 'sparkle': {
+          // Diamond with subtle glow
+          const s = p.size * (0.8 + Math.sin(p.phase + p.age * 8) * 0.2);
+          if (p.color2) {
+            ctx.fillStyle = p.color2;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, s * 1.8, 0, Math.PI * 2);
+            ctx.globalAlpha = p.alpha * 0.2;
+            ctx.fill();
+            ctx.globalAlpha = p.alpha;
+          }
+          ctx.fillStyle = p.color;
+          ctx.beginPath();
+          ctx.moveTo(p.x, p.y - s);
+          ctx.lineTo(p.x + s * 0.6, p.y);
+          ctx.lineTo(p.x, p.y + s);
+          ctx.lineTo(p.x - s * 0.6, p.y);
+          ctx.closePath();
+          ctx.fill();
+          break;
+        }
+        case 'ember': {
+          // Glowing ember — soft halo behind bright core
+          const s = p.size;
+          if (p.color2) {
+            ctx.fillStyle = p.color2;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, s * 2.5, 0, Math.PI * 2);
+            ctx.globalAlpha = p.alpha * 0.15;
+            ctx.fill();
+            ctx.globalAlpha = p.alpha;
+          }
+          ctx.fillStyle = p.color;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, s, 0, Math.PI * 2);
+          ctx.fill();
+          // Bright core
+          ctx.fillStyle = '#ffcc00';
+          ctx.globalAlpha = p.alpha * 0.6;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, s * 0.4, 0, Math.PI * 2);
+          ctx.fill();
+          break;
+        }
+        case 'leaf': {
+          // Rotated oval — simulates a tumbling leaf
+          const s = p.size;
+          const rot = p.phase + p.age * p.spin;
+          ctx.fillStyle = p.color;
+          ctx.save();
+          ctx.translate(p.x, p.y);
+          ctx.rotate(rot);
+          // Squash x based on rotation for 3D tumble illusion
+          const squash = 0.4 + Math.abs(Math.cos(rot * 1.5)) * 0.6;
+          ctx.scale(squash, 1);
+          ctx.beginPath();
+          ctx.ellipse(0, 0, s * 0.5, s, 0, 0, Math.PI * 2);
+          ctx.fill();
+          // Leaf vein
+          ctx.strokeStyle = p.color;
+          ctx.globalAlpha = p.alpha * 0.4;
+          ctx.lineWidth = 0.3;
+          ctx.beginPath();
+          ctx.moveTo(0, -s * 0.7);
+          ctx.lineTo(0, s * 0.7);
+          ctx.stroke();
+          ctx.restore();
+          break;
+        }
+        case 'mote': {
+          // Gentle golden shimmer — pulsing size
+          const s = p.size * (0.7 + Math.sin(p.phase + p.age * 6) * 0.3);
+          if (p.color2) {
+            ctx.fillStyle = p.color2;
+            ctx.globalAlpha = p.alpha * 0.25;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, s * 2, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.globalAlpha = p.alpha;
+          }
+          ctx.fillStyle = p.color;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, s, 0, Math.PI * 2);
+          ctx.fill();
+          break;
+        }
+        case 'wisp': {
+          // Erratic toxic wisp — stretched in movement direction
+          const s = p.size;
+          ctx.fillStyle = p.color;
+          ctx.beginPath();
+          ctx.ellipse(p.x, p.y, s * 1.5, s * 0.8, p.phase + p.age * 2, 0, Math.PI * 2);
+          ctx.fill();
+          if (p.color2) {
+            ctx.fillStyle = p.color2;
+            ctx.globalAlpha = p.alpha * 0.3;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, s * 2.5, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          break;
+        }
+        case 'bubble': {
+          // Hollow circle with highlight
+          const s = p.size;
+          ctx.strokeStyle = p.color;
+          ctx.lineWidth = 0.8;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, s, 0, Math.PI * 2);
+          ctx.stroke();
+          // Specular highlight
+          ctx.fillStyle = '#fff';
+          ctx.globalAlpha = p.alpha * 0.5;
+          ctx.beginPath();
+          ctx.arc(p.x - s * 0.3, p.y - s * 0.3, s * 0.25, 0, Math.PI * 2);
+          ctx.fill();
+          break;
+        }
+        default: {
+          // Dust — simple circle
+          ctx.fillStyle = p.color;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+          ctx.fill();
+          break;
+        }
       }
     }
     ctx.globalAlpha = 1;

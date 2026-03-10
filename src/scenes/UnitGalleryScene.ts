@@ -142,7 +142,7 @@ export class UnitGalleryScene implements Scene {
   }
 
   private getTabLayout(): { x: number; y: number; w: number; h: number }[] {
-    const W = this.canvas.width;
+    const W = this.canvas.clientWidth;
     const tabW = Math.min(60, (W - 120) / 7);
     const gap = 8;
     // Gaps: after A (index 0) and after C (index 2)
@@ -163,8 +163,8 @@ export class UnitGalleryScene implements Scene {
   }
 
   render(ctx: CanvasRenderingContext2D): void {
-    const W = this.canvas.width;
-    const H = this.canvas.height;
+    const W = this.canvas.clientWidth;
+    const H = this.canvas.clientHeight;
 
     // Background
     ctx.fillStyle = '#1a1a2e';

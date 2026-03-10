@@ -69,8 +69,8 @@ export class PostMatchScene implements Scene {
   }
 
   private getButtonRect(): { x: number; y: number; w: number; h: number } {
-    const w = this.canvas.width;
-    const h = this.canvas.height;
+    const w = this.canvas.clientWidth;
+    const h = this.canvas.clientHeight;
     const btnW = 260;
     const btnH = 56;
     return { x: (w - btnW) / 2, y: h * 0.90, w: btnW, h: btnH };
@@ -78,7 +78,8 @@ export class PostMatchScene implements Scene {
 
   private isButtonAt(cx: number, cy: number): boolean {
     const b = this.getButtonRect();
-    return cx >= b.x && cx <= b.x + b.w && cy >= b.y && cy <= b.y + b.h;
+    const pad = 8;
+    return cx >= b.x - pad && cx <= b.x + b.w + pad && cy >= b.y - pad && cy <= b.y + b.h + pad;
   }
 
   update(dt: number): void {
@@ -86,8 +87,8 @@ export class PostMatchScene implements Scene {
   }
 
   render(ctx: CanvasRenderingContext2D): void {
-    const w = ctx.canvas.width;
-    const h = ctx.canvas.height;
+    const w = ctx.canvas.clientWidth;
+    const h = ctx.canvas.clientHeight;
     ctx.imageSmoothingEnabled = false;
 
     // Water background
