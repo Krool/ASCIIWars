@@ -1,9 +1,9 @@
 import {
   GameState, GameCommand, Race, BuildingType, Lane, Team, HQ_WIDTH, HQ_HEIGHT,
-  HarvesterAssignment, HQ_HP, ZONES,
+  HarvesterAssignment, HQ_HP, MapDef, TICK_RATE,
 } from './types';
-import { RACE_BUILDING_COSTS, RACE_UPGRADE_COSTS, UPGRADE_TREES, UpgradeNodeDef, UNIT_STATS } from './data';
-import { getHQPosition } from './GameState';
+import { RACE_BUILDING_COSTS, RACE_UPGRADE_COSTS, UPGRADE_TREES, UpgradeNodeDef, UNIT_STATS, SPAWN_INTERVAL_TICKS, TOWER_STATS } from './data';
+import { getHQPosition, getUnitUpgradeMultipliers } from './GameState';
 
 // --- Bot Difficulty System ---
 
@@ -95,8 +95,8 @@ export const BOT_DIFFICULTY_PRESETS: Record<BotDifficultyLevel, BotDifficulty> =
   // Nightmare: unlimited, fastest builds, upgrades after 6 spawners
   [BotDifficultyLevel.Nightmare]: {
     buildSpeed: 10,           // 0.5 seconds between builds — relentless
-    upgradeSpeed: 30,         // upgrades every 1.5 seconds
-    upgradeThreshold: 6,      // start upgrading after 6 spawners
+    upgradeSpeed: 20,         // upgrades every 1.0 seconds — aggressive upgrade tempo
+    upgradeThreshold: 4,      // start upgrading after 4 spawners — earlier power spikes
     nukeMinTime: 1.0,
     laneIQ: 'threat',
     counterBuild: true,
@@ -451,6 +451,12 @@ export interface BotIntelligence {
   // Enemy scouting
   enemyBuildingCounts: { melee: number; ranged: number; caster: number; tower: number; hut: number };
   enemyAvgUpgradeTier: number;
+  /** Real-time enemy unit composition ratios (0-1) */
+  enemyMeleeRatio: number;
+  enemyRangedRatio: number;
+  enemyCasterRatio: number;
+  /** >1 = enemy investing in quality (upgrades), <1 = investing in quantity (spawners) */
+  enemyQuantityVsQuality: number;
 
   // Analysis timing
   lastAnalysisTick: number;
@@ -486,6 +492,10 @@ function createBotIntelligence(enemyRaces: Race[]): BotIntelligence {
     weakCategory: null,
     enemyBuildingCounts: { melee: 0, ranged: 0, caster: 0, tower: 0, hut: 0 },
     enemyAvgUpgradeTier: 0,
+    enemyMeleeRatio: 0.33,
+    enemyRangedRatio: 0.33,
+    enemyCasterRatio: 0.34,
+    enemyQuantityVsQuality: 1,
     lastAnalysisTick: 0,
     lastResourcePlanTick: 0,
     prevMyUnitIds: new Set(),
@@ -645,6 +655,20 @@ function botUpdateIntelligence(
     .map(b => Math.max(0, b.upgradePath.length - 1));
   intel.enemyAvgUpgradeTier = upgTiers.length > 0 ? upgTiers.reduce((a, b) => a + b, 0) / upgTiers.length : 0;
 
+  // Real-time enemy unit composition ratios
+  const enemyUnitTotal = enemyPerf.melee.alive + enemyPerf.ranged.alive + enemyPerf.caster.alive;
+  if (enemyUnitTotal > 0) {
+    intel.enemyMeleeRatio = enemyPerf.melee.alive / enemyUnitTotal;
+    intel.enemyRangedRatio = enemyPerf.ranged.alive / enemyUnitTotal;
+    intel.enemyCasterRatio = enemyPerf.caster.alive / enemyUnitTotal;
+  }
+
+  // Quantity vs quality assessment
+  const enemySpawnerTotal = intel.enemyBuildingCounts.melee + intel.enemyBuildingCounts.ranged + intel.enemyBuildingCounts.caster;
+  intel.enemyQuantityVsQuality = enemySpawnerTotal > 0
+    ? (intel.enemyAvgUpgradeTier + 0.5) / (enemySpawnerTotal / 4)
+    : 1;
+
   intel.myPerf = myPerf;
   intel.enemyPerf = enemyPerf;
 
@@ -710,16 +734,36 @@ function botUpdateIntelligence(
       shift[bestCat] += 1;
     }
 
-    // Counter enemy composition
-    const ec = intel.enemyBuildingCounts;
-    const enemyTotal = ec.melee + ec.ranged + ec.caster;
-    if (enemyTotal > 0) {
-      // Enemy is melee-heavy → ranged is strong
-      if (ec.melee / enemyTotal > 0.5) shift.ranged += 1;
-      // Enemy is ranged-heavy → melee to rush or towers to tank
-      if (ec.ranged / enemyTotal > 0.5) shift.melee += 1;
-      // Enemy has lots of towers → don't feed units into them, go ranged/caster
-      if (ec.tower >= 3) { shift.ranged += 1; shift.melee -= 1; }
+    // Counter enemy composition — use real unit ratios (more accurate than building counts)
+    if (enemyUnitTotal > 3) {
+      // Enemy melee-heavy → ranged shreds them from distance
+      if (intel.enemyMeleeRatio > 0.55) shift.ranged += 2;
+      else if (intel.enemyMeleeRatio > 0.4) shift.ranged += 1;
+      // Enemy ranged-heavy → melee to dive or casters for support
+      if (intel.enemyRangedRatio > 0.55) { shift.melee += 2; }
+      else if (intel.enemyRangedRatio > 0.4) shift.melee += 1;
+      // Enemy caster-heavy → melee assassins to reach backline
+      if (intel.enemyCasterRatio > 0.35) shift.melee += 1;
+    } else {
+      // Fallback to building counts early game
+      const ec = intel.enemyBuildingCounts;
+      const enemyBldgTotal = ec.melee + ec.ranged + ec.caster;
+      if (enemyBldgTotal > 0) {
+        if (ec.melee / enemyBldgTotal > 0.5) shift.ranged += 1;
+        if (ec.ranged / enemyBldgTotal > 0.5) shift.melee += 1;
+      }
+    }
+
+    // Enemy has lots of towers → ranged/caster to outrange, don't feed melee
+    if (intel.enemyBuildingCounts.tower >= 3) { shift.ranged += 1; shift.melee -= 1; }
+
+    // Quantity vs quality counter-play
+    if (intel.enemyQuantityVsQuality > 1.5) {
+      // Enemy invests in quality (few high-tier units) → overwhelm with numbers
+      shift.melee += 1; // cheap bodies
+    } else if (intel.enemyQuantityVsQuality < 0.5) {
+      // Enemy spams quantity (many low-tier units) → AoE/casters shine
+      shift.caster += 1;
     }
 
     // If losing badly, prioritize what's working and add towers (handled in build order)
@@ -1118,6 +1162,113 @@ function getSpawnerPower(race: Race, type: BuildingType): number {
   return dps + hp / 10;
 }
 
+// ==================== THROUGHPUT-BASED VALUATION (Nightmare) ====================
+
+/** Race-specific survivability multiplier reflecting passive effects (lifesteal, regen, shields, etc.) */
+const RACE_SURVIVABILITY: Record<Race, { melee: number; ranged: number; caster: number }> = {
+  [Race.Crown]:    { melee: 1.15, ranged: 1.05, caster: 1.10 },  // shields buff whole army
+  [Race.Horde]:    { melee: 1.15, ranged: 1.05, caster: 1.05 },  // knockback buys time
+  [Race.Goblins]:  { melee: 1.00, ranged: 1.05, caster: 1.05 },  // fast but fragile
+  [Race.Oozlings]: { melee: 1.10, ranged: 1.05, caster: 1.00 },  // haste helps dodge
+  [Race.Demon]:    { melee: 0.90, ranged: 0.95, caster: 0.90 },  // glass cannon penalty
+  [Race.Deep]:     { melee: 1.25, ranged: 1.10, caster: 1.10 },  // very tanky + slow debuff
+  [Race.Wild]:     { melee: 1.05, ranged: 1.05, caster: 1.05 },  // poison adds over time
+  [Race.Geists]:   { melee: 1.25, ranged: 1.10, caster: 1.10 },  // lifesteal + revive
+  [Race.Tenders]:  { melee: 1.20, ranged: 1.10, caster: 1.15 },  // regen + healing
+};
+
+/**
+ * Compute sustained combat throughput for a spawner type.
+ * Returns power produced per minute, factoring in spawn rate, unit count, DPS, and survivability.
+ * Optionally accepts an upgrade path to compute post-upgrade throughput.
+ */
+function getSpawnerThroughput(race: Race, type: BuildingType, upgradePath?: string[]): number {
+  const stats = UNIT_STATS[race]?.[type];
+  if (!stats) return 0;
+
+  let hp = stats.hp;
+  let damage = stats.damage;
+  let attackSpeed = stats.attackSpeed;
+  let spawnSpeed = 1;
+  let count = stats.spawnCount ?? 1;
+
+  // Apply upgrade multipliers if path provided
+  if (upgradePath && upgradePath.length > 1) {
+    const mults = getUnitUpgradeMultipliers(upgradePath, race, type);
+    hp *= mults.hp;
+    damage *= mults.damage;
+    attackSpeed *= mults.attackSpeed;
+    spawnSpeed = mults.spawnSpeed;
+    if (mults.special.spawnCount) count = mults.special.spawnCount;
+  }
+
+  // Spawns per minute
+  const spawnInterval = SPAWN_INTERVAL_TICKS * spawnSpeed;
+  const spawnsPerMinute = (60 * TICK_RATE) / Math.max(1, spawnInterval);
+  const unitsPerMinute = spawnsPerMinute * count;
+
+  // Unit combat value: geometric mean of offense and survival
+  const dps = damage / Math.max(0.2, attackSpeed);
+  const cat = type === BuildingType.MeleeSpawner ? 'melee'
+    : type === BuildingType.RangedSpawner ? 'ranged' : 'caster';
+  const survMult = RACE_SURVIVABILITY[race][cat];
+  const effectiveHp = hp * survMult;
+
+  // Power = sqrt(DPS * effectiveHP) — rewards balanced offense/defense
+  const unitPower = Math.sqrt(dps * effectiveHp);
+
+  return unitPower * unitsPerMinute;
+}
+
+/**
+ * Detect if an upgrade creates a disproportionate power spike.
+ * Returns a bonus multiplier (0 = no spike, 0.4 = massive spike).
+ */
+function detectPowerSpike(
+  race: Race, type: BuildingType, choice: string, threats: ThreatProfile,
+): number {
+  const tree = UPGRADE_TREES[race]?.[type];
+  if (!tree) return 0;
+  const node = tree[choice as keyof typeof tree] as UpgradeNodeDef | undefined;
+  if (!node?.special) return 0;
+  const s = node.special;
+
+  // Multishot / cleave / splash = multiplicative DPS gains
+  if (s.multishotCount) return 0.35;
+  if (s.cleaveTargets && threats.wantAoE) return 0.30;
+  if (s.splashRadius && threats.wantAoE) return 0.25;
+  // Crown shields = massive team-wide spike
+  if (race === Race.Crown && type === BuildingType.CasterSpawner && (s.shieldTargetBonus || s.shieldAbsorbBonus)) {
+    return threats.wantShields ? 0.40 : 0.20;
+  }
+  // Haste = big mobility spike for swarm
+  if (s.guaranteedHaste) return 0.20;
+  // Revive = effectively doubles unit life
+  if (s.reviveHpPct) return 0.25;
+  // Dodge = effective HP multiplier
+  if (s.dodgeChance && s.dodgeChance >= 0.25) return 0.20;
+  return 0;
+}
+
+/**
+ * Compute time-to-afford a cost bundle given current resources and income.
+ * Returns seconds. 0 = can afford now. 999 = can never afford.
+ */
+function timeToAfford(
+  player: GameState['players'][0], cost: { gold: number; wood: number; stone: number },
+  plan: ResourceProjection | null,
+): number {
+  const goldNeed = Math.max(0, cost.gold - player.gold);
+  const woodNeed = Math.max(0, cost.wood - player.wood);
+  const stoneNeed = Math.max(0, cost.stone - player.stone);
+  if (goldNeed === 0 && woodNeed === 0 && stoneNeed === 0) return 0;
+  if (!plan) return 999;
+  const goldSecs = plan.goldIncome > 0.01 ? goldNeed / plan.goldIncome : (goldNeed > 0 ? 999 : 0);
+  const woodSecs = plan.woodIncome > 0.01 ? woodNeed / plan.woodIncome : (woodNeed > 0 ? 999 : 0);
+  const stoneSecs = plan.stoneIncome > 0.01 ? stoneNeed / plan.stoneIncome : (stoneNeed > 0 ? 999 : 0);
+  return Math.max(goldSecs, woodSecs, stoneSecs);
+}
+
 function estimateSpawnerValue(
   state: GameState, ctx: BotContext, playerId: number, type: BuildingType,
 ): number {
@@ -1126,13 +1277,25 @@ function estimateSpawnerValue(
   const totalCost = resourceBundleTotal(cost);
   if (totalCost <= 0) return 0;
 
-  let value = getSpawnerPower(race, type) / totalCost;
+  const diff = ctx.difficulty[playerId] ?? ctx.defaultDifficulty;
   const intel = ctx.intelligence[playerId];
+
+  // Nightmare: use throughput-based valuation
+  let value: number;
+  if (diff.useValueFunction) {
+    const throughput = getSpawnerThroughput(race, type);
+    value = throughput / totalCost;
+  } else {
+    value = getSpawnerPower(race, type) / totalCost;
+  }
+
   const cat = buildingCategory(type);
   if (cat && intel) {
-    value *= 1 + Math.max(0, intel.buildShift[cat]) * 0.08;
-    if (intel.effectiveCategory === cat) value *= 1.12;
-    if (intel.weakCategory === cat && intel.armyAdvantage < 0.9) value *= 0.92;
+    // Build shift: stronger influence for nightmare bots
+    const shiftWeight = diff.useValueFunction ? 0.12 : 0.08;
+    value *= 1 + Math.max(0, intel.buildShift[cat]) * shiftWeight;
+    if (intel.effectiveCategory === cat) value *= 1.15;
+    if (intel.weakCategory === cat && intel.armyAdvantage < 0.9) value *= 0.88;
   }
   return value;
 }
@@ -1157,24 +1320,41 @@ function estimateUpgradeValue(
   const nodeDef = tree[choice as keyof typeof tree] as UpgradeNodeDef | undefined;
   if (!nodeDef) return { value: 0, choice };
 
-  const hpGain = (nodeDef.hpMult ?? 1) - 1;
-  const dmgGain = (nodeDef.damageMult ?? 1) - 1;
-  const spdGain = nodeDef.attackSpeedMult ? (1 - nodeDef.attackSpeedMult) : 0;
-  const moveGain = (nodeDef.moveSpeedMult ?? 1) - 1;
-  const rangeGain = (nodeDef.rangeMult ?? 1) - 1;
-  const threats = ctx.intelligence[playerId]?.threats ?? assessThreatProfile(enemyRaces);
-  const matchupBonus = scoreUpgradeNode(race, building.type, choice, threats) / 25;
-  const specialBonus = nodeDef.special ? 0.12 : 0;
-  const totalGain = hpGain * 0.35 + dmgGain * 0.9 + spdGain * 1.1 + moveGain * 0.2 + rangeGain * 0.5 + specialBonus + matchupBonus;
-
-  const basePower = building.type === BuildingType.Tower ? 10 : getSpawnerPower(race, building.type);
-  let value = (basePower * totalGain) / totalCost;
-
   const intel = ctx.intelligence[playerId];
+  const threats = intel?.threats ?? assessThreatProfile(enemyRaces);
+  let value: number;
+
+  if (diff.useValueFunction && building.type !== BuildingType.Tower) {
+    // Throughput-based: compute actual power delta from this upgrade
+    const currentTP = getSpawnerThroughput(race, building.type, building.upgradePath);
+    const newPath = [...building.upgradePath, choice];
+    const newTP = getSpawnerThroughput(race, building.type, newPath);
+    const throughputDelta = newTP - currentTP;
+
+    // Power spike detection: some upgrades have disproportionate impact
+    const spikeBonus = detectPowerSpike(race, building.type, choice, threats);
+    const matchupBonus = scoreUpgradeNode(race, building.type, choice, threats) / 40;
+
+    value = (throughputDelta * (1 + spikeBonus + matchupBonus)) / totalCost;
+  } else {
+    // Stat-based (non-nightmare or towers)
+    const hpGain = (nodeDef.hpMult ?? 1) - 1;
+    const dmgGain = (nodeDef.damageMult ?? 1) - 1;
+    const spdGain = nodeDef.attackSpeedMult ? (1 - nodeDef.attackSpeedMult) : 0;
+    const moveGain = (nodeDef.moveSpeedMult ?? 1) - 1;
+    const rangeGain = (nodeDef.rangeMult ?? 1) - 1;
+    const matchupBonus = scoreUpgradeNode(race, building.type, choice, threats) / 25;
+    const specialBonus = nodeDef.special ? 0.12 : 0;
+    const totalGain = hpGain * 0.35 + dmgGain * 0.9 + spdGain * 1.1 + moveGain * 0.2 + rangeGain * 0.5 + specialBonus + matchupBonus;
+
+    const basePower = building.type === BuildingType.Tower ? 10 : getSpawnerPower(race, building.type);
+    value = (basePower * totalGain) / totalCost;
+  }
+
   const cat = buildingCategory(building.type);
   if (intel && cat) {
-    if (intel.effectiveCategory === cat) value *= 1.15;
-    if (intel.armyAdvantage < 0.75 && intel.weakCategory === cat) value *= 0.9;
+    if (intel.effectiveCategory === cat) value *= 1.18;
+    if (intel.armyAdvantage < 0.75 && intel.weakCategory === cat) value *= 0.88;
   }
   if (building.type === BuildingType.Tower && (intel?.strategy === 'turtle' || (intel?.armyAdvantage ?? 1) < 0.8)) {
     value *= 1.15;
@@ -1220,23 +1400,69 @@ function shouldBuildHutNow(
   state: GameState, ctx: BotContext, playerId: number, profile: RaceProfile,
   hutCount: number, gameMinutes: number,
 ): boolean {
-  if (!botCanAffordHut(state, playerId, hutCount)) return false;
   if (hutCount >= profile.maxHuts) return false;
 
   const intel = ctx.intelligence[playerId];
-  const payback = estimateHutPaybackSeconds(state, ctx, playerId, hutCount);
+  const diff = ctx.difficulty[playerId] ?? ctx.defaultDifficulty;
   const armyAdvantage = intel?.armyAdvantage ?? 1;
   const myHqHp = state.hqHp[botTeam(playerId, state)];
+  const canAfford = botCanAffordHut(state, playerId, hutCount);
+
+  // Dynamic max huts: adjust based on game state
+  const dynamicMax = computeDynamicHutTarget(intel, gameMinutes, profile, hutCount, armyAdvantage);
+  if (hutCount >= dynamicMax) return false;
+
+  // Can't afford — return false (save-for logic handles this at the build level)
+  if (!canAfford) return false;
+
+  const payback = estimateHutPaybackSeconds(state, ctx, playerId, hutCount);
   const bottleneckWait = intel?.resourcePlan
     ? Math.max(intel.resourcePlan.goldSecsToTarget, intel.resourcePlan.woodSecsToTarget, intel.resourcePlan.stoneSecsToTarget)
     : 0;
 
+  // When behind hard: never invest in economy, spend on army
+  if (myHqHp < HQ_HP * 0.35 && armyAdvantage < 0.85) return false;
+  // When behind moderately: only if we have army parity
   if (myHqHp < HQ_HP * 0.45 && armyAdvantage < 0.95) return false;
+
+  // Nightmare bot: more aggressive economy when safe
+  if (diff.useValueFunction) {
+    // Early game: always invest in economy (huts pay for themselves quickly)
+    if (gameMinutes < 1.5) return payback <= 45;
+    if (gameMinutes < 2.5) return payback <= 55;
+    // When winning: expand economy for snowball
+    if (armyAdvantage > 1.3 && payback <= 90) return true;
+    // When even: invest if payback is reasonable
+    if (gameMinutes < 5) return payback <= 70 && armyAdvantage >= 0.85;
+    // Greed strategy or resource-starved
+    if ((intel?.strategy === 'greed' || bottleneckWait > 15) && payback <= 85 && armyAdvantage >= 0.85) return true;
+    if (gameMinutes > 7) return false;
+    return payback <= 60 && armyAdvantage >= 1.0;
+  }
+
+  // Non-nightmare logic (unchanged)
   if (gameMinutes < 2.25) return payback <= 55;
   if (gameMinutes < 4.5) return payback <= 75 && armyAdvantage >= 0.9;
   if ((intel?.strategy === 'greed' || bottleneckWait > 20) && payback <= 90 && armyAdvantage >= 0.85) return true;
   if (gameMinutes > 7) return false;
   return payback <= 65 && armyAdvantage >= 1.05;
+}
+
+/** Compute dynamic max hut target based on game state */
+function computeDynamicHutTarget(
+  intel: BotIntelligence | undefined, gameMinutes: number,
+  profile: RaceProfile, hutCount: number, armyAdvantage: number,
+): number {
+  let target = profile.maxHuts;
+  // When losing badly: freeze hut building
+  if (armyAdvantage < 0.65 && gameMinutes > 2) target = Math.min(target, hutCount);
+  // When winning big: allow one extra hut for snowball
+  if (armyAdvantage > 1.4) target = Math.min(target + 1, 8);
+  // Very late game: stop expanding economy
+  if (gameMinutes > 7) target = Math.min(target, hutCount);
+  // Turtle strategy: allow more econ
+  if (intel?.strategy === 'turtle' && armyAdvantage >= 0.8) target = Math.min(target + 1, 8);
+  return target;
 }
 
 interface NukeStrikePlan {
@@ -1249,17 +1475,18 @@ interface NukeStrikePlan {
   reason: 'diamond' | 'defense' | 'cluster';
 }
 
-function isLegalNukeTarget(myTeam: Team, y: number): boolean {
-  if (myTeam === Team.Bottom) return y >= ZONES.MID.start;
-  return y <= ZONES.MID.end;
+function isLegalNukeTarget(myTeam: Team, mapDef: MapDef, x: number, y: number): boolean {
+  const zone = mapDef.nukeZone[myTeam];
+  const axis = mapDef.shapeAxis === 'x' ? x : y;
+  return axis >= zone.min && axis <= zone.max;
 }
 
 function evaluateBestNukePlan(
   state: GameState, playerId: number, myTeam: Team, myHqHp: number,
 ): NukeStrikePlan | null {
   const enemyTeam = botEnemyTeam(playerId, state);
-  const legalEnemyUnits = state.units.filter(u => u.team === enemyTeam && isLegalNukeTarget(myTeam, u.y));
-  const legalEnemyHarvesters = state.harvesters.filter(h => h.team === enemyTeam && h.state !== 'dead' && isLegalNukeTarget(myTeam, h.y));
+  const legalEnemyUnits = state.units.filter(u => u.team === enemyTeam && isLegalNukeTarget(myTeam, state.mapDef, u.x, u.y));
+  const legalEnemyHarvesters = state.harvesters.filter(h => h.team === enemyTeam && h.state !== 'dead' && isLegalNukeTarget(myTeam, state.mapDef, h.x, h.y));
 
   const carrier = legalEnemyUnits.find(u => u.carryingDiamond);
   if (carrier) return { x: carrier.x, y: carrier.y, score: 999, victims: 1, nearHqVictims: 0, upgradedVictims: 1, reason: 'diamond' };
@@ -1378,8 +1605,8 @@ function runSingleBotAI(state: GameState, ctx: BotContext, playerId: number, emi
     botUpdateIntelligence(state, ctx, playerId);
   }
 
-  // Update resource plan every ~3 seconds (60 ticks)
-  const resourcePlanInterval = 60;
+  // Update resource plan every ~2-3 seconds (faster for nightmare)
+  const resourcePlanInterval = diff.useValueFunction ? 40 : 60;
   if (state.tick - intel.lastResourcePlanTick >= resourcePlanInterval) {
     intel.resourcePlan = botPlanResources(state, playerId, profile, myBuildings, gameMinutes, intel);
     intel.lastResourcePlanTick = state.tick;
@@ -1437,8 +1664,9 @@ function runSingleBotAI(state: GameState, ctx: BotContext, playerId: number, emi
   // 3. Lane management — quality scaled by difficulty
   botEvaluateLanes(state, ctx, playerId, myTeam, profile, myBuildings, gameMinutes, diff, emit);
 
-  // 4. Harvesters — check every ~3 seconds
-  const harvInterval = Math.max(40, Math.floor(60 / urgency));
+  // 4. Harvesters — check every ~2-3 seconds (faster for nightmare)
+  const baseHarvInterval = diff.useValueFunction ? 40 : 60;
+  const harvInterval = Math.max(30, Math.floor(baseHarvInterval / urgency));
   if (state.tick - (ctx.lastHarvesterTick[playerId] ?? 0) >= harvInterval) {
     botManageHarvesters(state, ctx, playerId, player, myBuildings, gameMinutes, emit);
     ctx.lastHarvesterTick[playerId] = state.tick;
@@ -1498,29 +1726,14 @@ function botValueBasedBuild(
   const race = player.race;
   const costs = RACE_BUILDING_COSTS[race];
   const intel = ctx.intelligence[playerId];
+  const plan = intel?.resourcePlan ?? null;
 
-  const spawnerValue = (type: BuildingType): number => estimateSpawnerValue(state, ctx, playerId, type);
-
-  const upgradeValue = (building: GameState['buildings'][0]): { value: number; choice: string } =>
-    estimateUpgradeValue(state, ctx, playerId, building, profile, enemyRaces, diff);
-
-  const hutValue = (): number => {
-    if (!shouldBuildHutNow(state, ctx, playerId, profile, hutCount, gameMinutes)) return 0;
-    const payback = estimateHutPaybackSeconds(state, ctx, playerId, hutCount);
-    const pressureBonus = intel && intel.resourcePlan
-      ? Math.min(0.12, Math.max(0, Math.max(
-        intel.resourcePlan.goldSecsToTarget,
-        intel.resourcePlan.woodSecsToTarget,
-        intel.resourcePlan.stoneSecsToTarget,
-      ) - 15) * 0.004)
-      : 0;
-    return Math.max(0.01, 1 / Math.max(25, payback)) * 25 + pressureBonus;
-  };
-
-  // Score all options
+  // Score all options — including unaffordable ones for save-for logic
   interface BuildOption {
     action: 'spawner' | 'upgrade' | 'hut' | 'tower' | 'alley_tower';
     value: number;
+    affordable: boolean;
+    waitSecs: number;  // seconds to afford (0 if affordable now)
     type?: BuildingType;
     building?: GameState['buildings'][0];
     upgradeChoice?: string;
@@ -1528,62 +1741,160 @@ function botValueBasedBuild(
 
   const options: BuildOption[] = [];
 
-  // Spawner options
+  // --- Spawner options (both affordable and unaffordable) ---
   const spawnerTypes = [BuildingType.MeleeSpawner, BuildingType.RangedSpawner, BuildingType.CasterSpawner];
+  const shift = (diff.useDynamicShift && intel?.buildShift) ? intel.buildShift : { melee: 0, ranged: 0, caster: 0 };
+
   for (const type of spawnerTypes) {
-    if (botCanAfford(state, playerId, type)) {
-      const sv = spawnerValue(type);
-      // Apply dynamic shift bonus
-      const shift = (diff.useDynamicShift && intel?.buildShift) ? intel.buildShift : { melee: 0, ranged: 0, caster: 0 };
-      const cat = type === BuildingType.MeleeSpawner ? 'melee' : type === BuildingType.RangedSpawner ? 'ranged' : 'caster';
-      const shiftBonus = Math.max(0, shift[cat]) * 0.02;
-      options.push({ action: 'spawner', value: sv + shiftBonus, type });
-    }
+    const sv = estimateSpawnerValue(state, ctx, playerId, type);
+    const cat = type === BuildingType.MeleeSpawner ? 'melee' : type === BuildingType.RangedSpawner ? 'ranged' : 'caster';
+    const shiftBonus = Math.max(0, shift[cat]) * 0.02;
+    const cost = costs[type];
+    const canAfford = botCanAfford(state, playerId, type);
+    const wait = canAfford ? 0 : timeToAfford(player, cost, plan);
+    options.push({ action: 'spawner', value: sv + shiftBonus, affordable: canAfford, waitSecs: wait, type });
   }
 
-  // Upgrade options (only if we have enough spawners)
+  // --- Upgrade options (both affordable and unaffordable) ---
   const spawnerCount = meleeCount + rangedCount + casterCount;
   if (spawnerCount >= diff.upgradeThreshold) {
     const upgradeable = myBuildings
       .filter(b => b.type !== BuildingType.HarvesterHut && b.upgradePath.length > 0 && b.upgradePath.length < 3);
     for (const b of upgradeable) {
-      const uv = upgradeValue(b);
-      if (uv.value > 0) {
-        options.push({ action: 'upgrade', value: uv.value, building: b, upgradeChoice: uv.choice });
+      const choice = botPickUpgrade(state, ctx, b, profile, race, enemyRaces, diff);
+      const raceCosts = RACE_UPGRADE_COSTS[race];
+      const tier = b.upgradePath.length === 1 ? raceCosts.tier1 : raceCosts.tier2;
+      const canAfford = player.gold >= tier.gold && player.wood >= tier.wood && player.stone >= tier.stone;
+
+      // Compute value even if can't afford (for save-for comparison)
+      let uv: number;
+      if (diff.useValueFunction && b.type !== BuildingType.Tower) {
+        const totalCost = resourceBundleTotal(tier);
+        if (totalCost <= 0) continue;
+        const currentTP = getSpawnerThroughput(race, b.type, b.upgradePath);
+        const newPath = [...b.upgradePath, choice];
+        const newTP = getSpawnerThroughput(race, b.type, newPath);
+        const throughputDelta = newTP - currentTP;
+        const threats = intel?.threats ?? assessThreatProfile(enemyRaces);
+        const spikeBonus = detectPowerSpike(race, b.type, choice, threats);
+        const matchupBonus = scoreUpgradeNode(race, b.type, choice, threats) / 40;
+        uv = (throughputDelta * (1 + spikeBonus + matchupBonus)) / totalCost;
+
+        // Boost for effective category
+        const cat = buildingCategory(b.type);
+        if (intel && cat) {
+          if (intel.effectiveCategory === cat) uv *= 1.18;
+          if (intel.armyAdvantage < 0.75 && intel.weakCategory === cat) uv *= 0.88;
+        }
+      } else {
+        const fullUv = estimateUpgradeValue(state, ctx, playerId, b, profile, enemyRaces, diff);
+        uv = fullUv.value;
+      }
+
+      if (uv > 0) {
+        const wait = canAfford ? 0 : timeToAfford(player, tier, plan);
+        options.push({
+          action: 'upgrade', value: uv, affordable: canAfford, waitSecs: wait,
+          building: b, upgradeChoice: choice,
+        });
       }
     }
   }
 
-  // Hut option
-  const hv = hutValue();
-  if (hv > 0) {
-    options.push({ action: 'hut', value: hv });
+  // --- Hut option ---
+  if (hutCount < profile.maxHuts && hutCount < diff.maxHuts) {
+    const shouldBuild = shouldBuildHutNow(state, ctx, playerId, profile, hutCount, gameMinutes);
+    if (shouldBuild) {
+      const payback = estimateHutPaybackSeconds(state, ctx, playerId, hutCount);
+      // Convert hut value to comparable throughput units:
+      // hut enables (income * timeHorizon / avgSpawnerCost) additional spawners worth of throughput
+      const timeHorizon = Math.max(60, 300 - gameMinutes * 30);
+      const avgSpawnerCost = spawnerTypes.reduce((sum, t) => sum + resourceBundleTotal(costs[t]), 0) / 3;
+      const avgThroughput = spawnerTypes.reduce((sum, t) => sum + getSpawnerThroughput(race, t), 0) / 3;
+      const additionalIncome = 1.6; // resources per second per harvester
+      const enabledThroughput = avgSpawnerCost > 0
+        ? (additionalIncome * timeHorizon / avgSpawnerCost) * avgThroughput
+        : 0;
+      const hutBase = costs[BuildingType.HarvesterHut];
+      const mult = Math.pow(1.35, Math.max(0, hutCount - 1));
+      const hutTotalCost = Math.floor(hutBase.gold * mult) + Math.floor(hutBase.wood * mult) + Math.floor(hutBase.stone * mult);
+      let hv = hutTotalCost > 0 ? enabledThroughput / hutTotalCost : 0;
+      // Scale down if payback is long
+      if (payback > 60) hv *= 60 / payback;
+      // Pressure bonus when resource-starved
+      const pressureBonus = plan
+        ? Math.min(0.15, Math.max(0, Math.max(
+          plan.goldSecsToTarget, plan.woodSecsToTarget, plan.stoneSecsToTarget,
+        ) - 15) * 0.005)
+        : 0;
+      hv += pressureBonus;
+      if (hv > 0) {
+        const canAffordHut = botCanAffordHut(state, playerId, hutCount);
+        options.push({ action: 'hut', value: hv, affordable: canAffordHut, waitSecs: 0 });
+      }
+    }
   }
 
-  // Tower options
+  // --- Tower options ---
   const totalTowers = towerCount + alleyTowerCount;
-  if (totalTowers < profile.lateTowers + profile.alleyTowers && botCanAfford(state, playerId, BuildingType.Tower)) {
+  if (totalTowers < profile.lateTowers + profile.alleyTowers) {
+    const ts = TOWER_STATS[race];
     const towerCost = costs[BuildingType.Tower];
-    const totalCost = towerCost.gold + towerCost.wood + towerCost.stone;
-    const towerVal = totalCost > 0 ? 5 / totalCost : 0;
+    const totalCostT = towerCost.gold + towerCost.wood + towerCost.stone;
+    const towerDPS = ts.damage / ts.attackSpeed;
+    let towerVal = totalCostT > 0 ? (towerDPS + ts.hp * 0.005) / totalCostT : 0;
     // Towers more valuable when losing
-    const defenseBonus = (intel?.armyAdvantage ?? 1) < 0.7 ? towerVal * 0.5 : 0;
+    const armyAdv = intel?.armyAdvantage ?? 1;
+    if (armyAdv < 0.7) towerVal *= 1.6;
+    else if (armyAdv < 0.9) towerVal *= 1.2;
+    // First tower is free — massive value
+    if (totalTowers === 0) towerVal *= 5;
+    const canAffordTower = botCanAfford(state, playerId, BuildingType.Tower);
     if (alleyTowerCount < profile.alleyTowers) {
-      options.push({ action: 'alley_tower', value: towerVal + defenseBonus });
+      options.push({ action: 'alley_tower', value: towerVal, affordable: canAffordTower, waitSecs: 0 });
     } else if (towerCount < profile.lateTowers) {
-      options.push({ action: 'tower', value: towerVal + defenseBonus, type: BuildingType.Tower });
+      options.push({ action: 'tower', value: towerVal, affordable: canAffordTower, waitSecs: 0, type: BuildingType.Tower });
     }
   }
 
   if (options.length === 0) return false;
 
-  // Sort by value, pick best
-  options.sort((a, b) => b.value - a.value);
+  // --- Save-for logic: should we skip buying cheap now to afford something better soon? ---
+  const affordableOptions = options.filter(o => o.affordable);
+  const unaffordableOptions = options.filter(o => !o.affordable && o.waitSecs < 20 && o.waitSecs > 0);
+
+  // Sort both by value (deterministic tie-break by action name, then type, then building id)
+  const optionSort = (a: BuildOption, b: BuildOption) =>
+    b.value - a.value
+    || a.action.localeCompare(b.action)
+    || (a.type ?? '').localeCompare(b.type ?? '')
+    || (a.building?.id ?? 0) - (b.building?.id ?? 0);
+  affordableOptions.sort(optionSort);
+  unaffordableOptions.sort(optionSort);
+
+  const bestAffordable = affordableOptions[0];
+  const bestUnaffordable = unaffordableOptions[0];
+
+  // If a much better option is almost affordable, save for it
+  if (bestUnaffordable && bestAffordable) {
+    const valueRatio = bestUnaffordable.value / Math.max(0.001, bestAffordable.value);
+    // Save if: unaffordable is 60%+ better AND we can afford it within 12 seconds
+    if (valueRatio > 1.6 && bestUnaffordable.waitSecs <= 12) {
+      return false; // skip building — save resources
+    }
+    // Also save if: upgrade is 40%+ better AND almost ready (< 6 seconds)
+    if (bestUnaffordable.action === 'upgrade' && valueRatio > 1.4 && bestUnaffordable.waitSecs <= 6) {
+      return false;
+    }
+  }
+
+  // If nothing affordable, skip
+  if (!bestAffordable) return false;
 
   // Mistake: occasionally pick 2nd or 3rd best
-  let pick = options[0];
-  if (diff.mistakeRate > 0 && options.length > 1 && state.rng() < diff.mistakeRate) {
-    pick = options[Math.min(1, options.length - 1)];
+  let pick = bestAffordable;
+  if (diff.mistakeRate > 0 && affordableOptions.length > 1 && state.rng() < diff.mistakeRate) {
+    pick = affordableOptions[Math.min(1, affordableOptions.length - 1)];
   }
 
   switch (pick.action) {
@@ -1830,6 +2141,12 @@ function botUpgradeBuildings(
   const upgradeable = myBuildings
     .filter(b => b.type !== BuildingType.HarvesterHut && b.upgradePath.length < 3)
     .sort((a, b) => {
+      // Nightmare: sort by throughput value (best bang for buck first)
+      if (diff.useValueFunction && a.type !== BuildingType.Tower && b.type !== BuildingType.Tower) {
+        const uvA = estimateUpgradeValue(state, ctx, playerId, a, profile, enemyRaces, diff);
+        const uvB = estimateUpgradeValue(state, ctx, playerId, b, profile, enemyRaces, diff);
+        if (Math.abs(uvA.value - uvB.value) > 0.001) return uvB.value - uvA.value;
+      }
       const isSpawnerA = a.type !== BuildingType.Tower;
       const isSpawnerB = b.type !== BuildingType.Tower;
       if (gameMinutes < 6 && isSpawnerA !== isSpawnerB) return isSpawnerA ? -1 : 1;
@@ -2033,11 +2350,29 @@ function botEvaluateLanes(
     return;
   }
 
+  // ALL-IN PUSH: when dominating, commit to weakest enemy lane (nightmare only)
+  const intel = ctx.intelligence[playerId];
+  if (targetLane === null && diff.useValueFunction && intel && intel.armyAdvantage > 1.8 && gameMinutes > 2) {
+    const weakerLane = enemyLeftStr <= enemyRightStr ? Lane.Left : Lane.Right;
+    if (currentLane !== weakerLane) {
+      targetLane = weakerLane;
+      // Coordinate with team via chat
+      if (state.tick - (ctx.lastChatTick[playerId] ?? 0) > 200) {
+        const msg = weakerLane === Lane.Left ? 'Attack Left' : 'Attack Right';
+        emit({ type: 'quick_chat', playerId, message: msg });
+        ctx.lastChatTick[playerId] = state.tick;
+      }
+    }
+  }
+
   // PROACTIVE: push weaker lane when strong enough
   if (targetLane === null && totalMyUnits >= 3) {
     const overallRatio = (myTotalStr + 1) / (enemyTotalStr + 1);
+    // Nightmare: lower push threshold → commit earlier when any advantage exists
+    const effectivePushThreshold = diff.useValueFunction
+      ? Math.min(profile.pushThreshold, 0.85) : profile.pushThreshold;
 
-    if (overallRatio > profile.pushThreshold) {
+    if (overallRatio > effectivePushThreshold) {
       const lastPush = ctx.lastPushTick[playerId] ?? 0;
       const pushCooldown = 200; // 10 seconds cooldown
 
@@ -2076,13 +2411,28 @@ function botEvaluateLanes(
     }
   }
 
-  // STALL-BREAKER: after 7 min, both teammates commit to same lane to force a win
-  if (targetLane === null && gameMinutes > 7) {
+  // STALL-BREAKER: commit to same lane to force a win (earlier for nightmare)
+  const stallTime = diff.useValueFunction ? 5 : 7;
+  if (targetLane === null && gameMinutes > stallTime) {
     const enemyHqHp = state.hqHp[botEnemyTeam(playerId, state)];
     if (enemyHqHp > HQ_HP * 0.3) {
       // Pick the lane with less enemy resistance
       const commitLane = enemyLeftStr <= enemyRightStr ? Lane.Left : Lane.Right;
       if (currentLane !== commitLane) targetLane = commitLane;
+    }
+  }
+
+  // SPAWN WAVE TIMING: defer lane switch to align with spawn waves (nightmare only)
+  if (targetLane !== null && targetLane !== currentLane && diff.useValueFunction) {
+    // Find nearest spawn wave from our spawners
+    let nearestSpawn = SPAWN_INTERVAL_TICKS; // default if no spawners
+    for (const s of spawners) {
+      if (s.actionTimer < nearestSpawn) nearestSpawn = s.actionTimer;
+    }
+    // If wave is 3-8 seconds away, defer the switch so units deploy in the new lane
+    // (If wave is imminent (<60 ticks) or far away (>160 ticks), switch now)
+    if (nearestSpawn > 60 && nearestSpawn < 160) {
+      targetLane = null; // defer — will switch on next check when wave is closer
     }
   }
 

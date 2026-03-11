@@ -27,6 +27,7 @@ export interface RaceStats {
   unitsSpawned: number;
   nukeKills: number;
   buildingsPlaced: number;
+  fastWins?: number;          // wins under 5 minutes
 }
 
 export interface PlayerProfile {
@@ -74,6 +75,17 @@ export const ACHIEVEMENT_AVATARS: AvatarDef[] = [
   { id: 'wild:caster', race: Race.Wild, category: 'caster', achievementId: 'marathon' },
   { id: 'geists:ranged', race: Race.Geists, category: 'ranged', achievementId: 'undying' },
   { id: 'tenders:ranged', race: Race.Tenders, category: 'ranged', achievementId: 'tenders_touch' },
+  // Upgrade-tier avatars (tough achievements)
+  { id: 'geists:melee:G', race: Race.Geists, category: 'melee', upgradeNode: 'G', achievementId: 'mimic_master' },
+  { id: 'crown:ranged:G', race: Race.Crown, category: 'ranged', upgradeNode: 'G', achievementId: 'dwarfette_elite' },
+  { id: 'wild:melee:D', race: Race.Wild, category: 'melee', upgradeNode: 'D', achievementId: 'bull_rush' },
+  { id: 'wild:melee:B', race: Race.Wild, category: 'melee', upgradeNode: 'B', achievementId: 'apex_predator' },
+  { id: 'deep:melee:G', race: Race.Deep, category: 'melee', upgradeNode: 'G', achievementId: 'frog_royalty' },
+  { id: 'tenders:caster:G', race: Race.Tenders, category: 'caster', upgradeNode: 'G', achievementId: 'fungal_lord' },
+  { id: 'geists:caster:G', race: Race.Geists, category: 'caster', upgradeNode: 'G', achievementId: 'dark_sorcerer' },
+  { id: 'tenders:melee:E', race: Race.Tenders, category: 'melee', upgradeNode: 'E', achievementId: 'ancient_ent' },
+  { id: 'wild:ranged:G', race: Race.Wild, category: 'ranged', upgradeNode: 'G', achievementId: 'hydra_lord' },
+  { id: 'wild:melee:F', race: Race.Wild, category: 'melee', upgradeNode: 'F', achievementId: 'serpent_king' },
 ];
 
 export const ALL_AVATARS: AvatarDef[] = [...DEFAULT_AVATARS, ...ACHIEVEMENT_AVATARS];
@@ -97,6 +109,17 @@ export const ACHIEVEMENTS: AchievementDef[] = [
   { id: 'nature_wrath', name: "Nature's Wrath", desc: 'Deal 50,000 damage as Tenders.', goal: 50000, avatarUnlock: 'wild:ranged' },
   { id: 'veteran', name: 'Veteran', desc: 'Play 50 games.', goal: 50, avatarUnlock: 'oozlings:caster' },
   { id: 'tenders_touch', name: "Tender's Touch", desc: 'Win 10 games as Tenders.', goal: 10, avatarUnlock: 'tenders:ranged' },
+  // ── Tough achievements (upgrade-tier avatars) ──
+  { id: 'mimic_master', name: 'Mimic Master', desc: 'Win 25 games as Geists.', goal: 25, avatarUnlock: 'geists:melee:G' },
+  { id: 'dwarfette_elite', name: 'Dwarfette Elite', desc: 'Deal 250,000 total damage as Crown.', goal: 250000, avatarUnlock: 'crown:ranged:G' },
+  { id: 'bull_rush', name: 'Bull Rush', desc: 'Win 50 games as Wild.', goal: 50, avatarUnlock: 'wild:melee:D' },
+  { id: 'apex_predator', name: 'Apex Predator', desc: 'Win 10 games as Wild in under 5 min.', goal: 10, avatarUnlock: 'wild:melee:B' },
+  { id: 'frog_royalty', name: 'Frog Royalty', desc: 'Win 25 games as Deep.', goal: 25, avatarUnlock: 'deep:melee:G' },
+  { id: 'fungal_lord', name: 'Fungal Lord', desc: 'Deal 300,000 total damage as Tenders.', goal: 300000, avatarUnlock: 'tenders:caster:G' },
+  { id: 'dark_sorcerer', name: 'Dark Sorcerer', desc: 'Deal 300,000 total damage as Geists.', goal: 300000, avatarUnlock: 'geists:caster:G' },
+  { id: 'ancient_ent', name: 'Ancient Ent', desc: 'Spawn 2,000 units as Tenders.', goal: 2000, avatarUnlock: 'tenders:melee:E' },
+  { id: 'hydra_lord', name: 'Hydra Lord', desc: 'Deal 500,000 total damage as Wild.', goal: 500000, avatarUnlock: 'wild:ranged:G' },
+  { id: 'serpent_king', name: 'Serpent King', desc: 'Win a 10-game streak.', goal: 10, avatarUnlock: 'wild:melee:F' },
 ];
 
 // ─── Load / Save ───
@@ -179,6 +202,7 @@ export function updateProfileFromMatch(
   rs.nukeKills += stats.nukeKills;
   const myBuildings = state.buildings.filter(b => b.playerId === localPlayerId);
   rs.buildingsPlaced += myBuildings.length;
+  if (won && durationSec < 300) rs.fastWins = (rs.fastWins ?? 0) + 1;
 
   // Count building types for achievements
   const towerCount = myBuildings.filter(b => b.type === BuildingType.Tower).length;
@@ -268,6 +292,56 @@ export function updateProfileFromMatch(
   if (race === Race.Tenders && won) {
     check('tenders_touch', profile.raceStats[Race.Tenders]!.wins);
   }
+
+  // ── Tough achievements (upgrade-tier) ──
+
+  // Mimic Master — 25 wins as Geists
+  if (race === Race.Geists && won) {
+    check('mimic_master', profile.raceStats[Race.Geists]!.wins);
+  }
+
+  // Dwarfette Elite — 250k damage as Crown
+  if (race === Race.Crown) {
+    check('dwarfette_elite', profile.raceStats[Race.Crown]!.damageDealt);
+  }
+
+  // Bull Rush — 50 wins as Wild
+  if (race === Race.Wild && won) {
+    check('bull_rush', profile.raceStats[Race.Wild]!.wins);
+  }
+
+  // Apex Predator — 10 fast wins (<5min) as Wild
+  if (race === Race.Wild && won && durationSec < 300) {
+    check('apex_predator', profile.raceStats[Race.Wild]!.fastWins ?? 0);
+  }
+
+  // Frog Royalty — 25 wins as Deep
+  if (race === Race.Deep && won) {
+    check('frog_royalty', profile.raceStats[Race.Deep]!.wins);
+  }
+
+  // Fungal Lord — 300k damage as Tenders
+  if (race === Race.Tenders) {
+    check('fungal_lord', profile.raceStats[Race.Tenders]!.damageDealt);
+  }
+
+  // Dark Sorcerer — 300k damage as Geists
+  if (race === Race.Geists) {
+    check('dark_sorcerer', profile.raceStats[Race.Geists]!.damageDealt);
+  }
+
+  // Ancient Ent — 2000 units as Tenders
+  if (race === Race.Tenders) {
+    check('ancient_ent', profile.raceStats[Race.Tenders]!.unitsSpawned);
+  }
+
+  // Hydra Lord — 500k damage as Wild
+  if (race === Race.Wild) {
+    check('hydra_lord', profile.raceStats[Race.Wild]!.damageDealt);
+  }
+
+  // Serpent King — 10 win streak
+  check('serpent_king', profile.winStreak);
 
   saveProfile(profile);
   return newlyUnlocked;

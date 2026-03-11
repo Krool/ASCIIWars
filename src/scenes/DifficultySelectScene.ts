@@ -134,6 +134,7 @@ export class DifficultySelectScene implements Scene {
   private hoverIndex = -1;
   private mapHoverIndex = -1;
   private tick = 0;
+  private sceneAge = 0;
   private mapIndex = 0;
 
   private clickHandler: ((e: MouseEvent) => void) | null = null;
@@ -176,6 +177,7 @@ export class DifficultySelectScene implements Scene {
 
     this.clickHandler = (e) => {
       const [cx, cy] = this.toCanvas(e.clientX, e.clientY);
+      if (this.isBackButtonAt(cx, cy)) { this.manager.switchTo('raceSelect'); return; }
       const mapIdx = this.getMapCardIndexAt(cx, cy);
       if (mapIdx >= 0) {
         this.mapIndex = mapIdx;
@@ -204,6 +206,7 @@ export class DifficultySelectScene implements Scene {
       const touch = e.touches[0];
       if (!touch) return;
       const [cx, cy] = this.toCanvas(touch.clientX, touch.clientY);
+      if (this.isBackButtonAt(cx, cy)) { this.manager.switchTo('raceSelect'); return; }
       const mapIdx = this.getMapCardIndexAt(cx, cy);
       if (mapIdx >= 0) {
         this.mapIndex = mapIdx;
@@ -238,7 +241,7 @@ export class DifficultySelectScene implements Scene {
     this.touchHandler = null;
   }
 
-  update(_dt: number): void { this.tick++; }
+  update(_dt: number): void { this.tick++; this.sceneAge += _dt; }
 
   private toCanvas(clientX: number, clientY: number): [number, number] {
     const rect = this.canvas.getBoundingClientRect();
@@ -271,17 +274,15 @@ export class DifficultySelectScene implements Scene {
 
   private getMapCardLayout(): { x: number; y: number; w: number; h: number }[] {
     const w = this.canvas.clientWidth;
-    const stack = w < 430;
-    const gap = 12;
-    const cardH = stack ? 72 : 88;
-    const totalW = Math.min(w * 0.82, 440);
-    const cardW = stack ? totalW : (totalW - gap) / 2;
-    const startX = (w - totalW) / 2;
+    const gap = 10;
+    const cardW = Math.min(w * 0.8, 420);
+    const cardH = 72;
+    const startX = (w - cardW) / 2;
     const startY = 58;
 
     return MAP_OPTIONS.map((_, i) => ({
-      x: stack ? startX : startX + i * (cardW + gap),
-      y: startY + (stack ? i * (cardH + gap) : 0),
+      x: startX,
+      y: startY + i * (cardH + gap),
       w: cardW,
       h: cardH,
     }));
@@ -294,7 +295,7 @@ export class DifficultySelectScene implements Scene {
     const gap = 10;
     const mapCards = this.getMapCardLayout();
     const mapBottom = Math.max(...mapCards.map((card) => card.y + card.h));
-    const topMargin = mapBottom + 38;
+    const topMargin = mapBottom + 14;
     const heights = this.getDifficultyCardHeights(cardW);
     const totalH = heights.reduce((sum, cardH) => sum + cardH, 0) + (DIFFICULTIES.length - 1) * gap;
     const startY = topMargin + (h - topMargin - 80 - totalH) / 2;
@@ -356,13 +357,26 @@ export class DifficultySelectScene implements Scene {
     return -1;
   }
 
-  private isStartButtonAt(cx: number, cy: number): boolean {
+  private getButtonRow(): { backX: number; startX: number; btnW: number; btnH: number; btnY: number } {
     const w = this.canvas.clientWidth;
     const h = this.canvas.clientHeight;
-    const btnW = 260;
-    const btnH = 50;
+    const btnGap = 10;
+    const totalBtnW = Math.min(w * 0.9, 440);
+    const btnW = (totalBtnW - btnGap) / 2;
+    const rowX = (w - totalBtnW) / 2;
+    return { backX: rowX, startX: rowX + btnW + btnGap, btnW, btnH: 56, btnY: h - 72 };
+  }
+
+  private isStartButtonAt(cx: number, cy: number): boolean {
+    const { startX, btnW, btnH, btnY } = this.getButtonRow();
     const pad = 8;
-    return cx >= (w - btnW) / 2 - pad && cx <= (w + btnW) / 2 + pad && cy >= h - 66 - pad && cy <= h - 66 + btnH + pad;
+    return cx >= startX - pad && cx <= startX + btnW + pad && cy >= btnY - pad && cy <= btnY + btnH + pad;
+  }
+
+  private isBackButtonAt(cx: number, cy: number): boolean {
+    const { backX, btnW, btnH, btnY } = this.getButtonRow();
+    const pad = 8;
+    return cx >= backX - pad && cx <= backX + btnW + pad && cy >= btnY - pad && cy <= btnY + btnH + pad;
   }
 
   render(ctx: CanvasRenderingContext2D): void {
@@ -387,15 +401,10 @@ export class DifficultySelectScene implements Scene {
     ctx.font = `bold ${titleSize}px monospace`;
     ctx.textAlign = 'center';
     ctx.fillStyle = '#fff';
-    ctx.fillText('CHOOSE DIFFICULTY', w / 2, ribbonY + ribbonH * 0.58);
+    ctx.fillText('GAME SETTINGS', w / 2, ribbonY + ribbonH * 0.58);
 
     const hintSize = Math.max(9, Math.min(w / 55, 12));
     const mapCards = this.getMapCardLayout();
-    const mapBottom = Math.max(...mapCards.map((card) => card.y + card.h));
-
-    ctx.font = `bold ${Math.max(10, hintSize + 1)}px monospace`;
-    ctx.fillStyle = 'rgba(255,255,255,0.75)';
-    ctx.fillText('MAP', w / 2, mapCards[0].y - 6);
 
     for (let i = 0; i < MAP_OPTIONS.length; i++) {
       const option = MAP_OPTIONS[i];
@@ -440,12 +449,6 @@ export class DifficultySelectScene implements Scene {
         shadowText(ctx, `  ${option.details[di]}`, leftX, y, isSelected ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.58)', 'rgba(0,0,0,0.4)');
       }
     }
-
-    ctx.font = `${hintSize}px monospace`;
-    ctx.textAlign = 'center';
-    ctx.fillStyle = 'rgba(255,255,255,0.5)';
-    ctx.fillText('Left/Right changes map  |  Up/Down changes difficulty', w / 2, mapBottom + 16);
-    ctx.fillText('Enter or START to play', w / 2, mapBottom + 28);
 
     const cards = this.getCardLayout();
 
@@ -511,28 +514,48 @@ export class DifficultySelectScene implements Scene {
       }
     }
 
-    const btnW = 260;
-    const btnH = 50;
-    const btnX = (w - btnW) / 2;
-    const btnY = h - 66;
+    // Bottom button row: BACK (left) + START (right) — matches race select sizing
+    const btnGap = 10;
+    const totalBtnW = Math.min(w * 0.9, 440);
+    const btnW = (totalBtnW - btnGap) / 2;
+    const btnH = 56;
+    const btnY = h - 72;
+    const rowX = (w - totalBtnW) / 2;
     const selColor = DIFFICULTIES[this.selectedIndex].color;
-    const swordVariant = this.selectedIndex === 0 ? 0 : this.selectedIndex === 1 ? 2 : this.selectedIndex === 2 ? 3 : 1;
-    this.ui.drawSword(ctx, btnX, btnY, btnW, btnH, swordVariant);
 
-    ctx.font = 'bold 17px monospace';
-    ctx.textAlign = 'center';
-    const textX = btnX + btnW * 0.52;
-    ctx.fillStyle = 'rgba(0,0,0,0.5)';
-    ctx.fillText('START', textX + 1, btnY + btnH * 0.56 + 1);
-    ctx.fillStyle = '#fff';
-    ctx.fillText('START', textX, btnY + btnH * 0.56);
+    // BACK sword (dark variant 4)
+    const backX = rowX;
+    const rb = UIAssets.swordReveal(this.sceneAge, 0);
+    const obx = this.ui.drawSword(ctx, backX, btnY, btnW, btnH, 4, rb);
+    if (rb > 0) {
+      ctx.font = 'bold 16px monospace';
+      ctx.textAlign = 'center';
+      ctx.globalAlpha = rb;
+      const backTextX = backX + btnW * 0.52 + obx;
+      ctx.fillStyle = 'rgba(0,0,0,0.5)';
+      ctx.fillText('BACK', backTextX + 1, btnY + btnH * 0.58 + 1);
+      ctx.fillStyle = '#fff';
+      ctx.fillText('BACK', backTextX, btnY + btnH * 0.58);
+      ctx.globalAlpha = 1;
+    }
+
+    // START sword (blue variant 0)
+    const startX = rowX + btnW + btnGap;
+    const rs = UIAssets.swordReveal(this.sceneAge, 1);
+    const osx = this.ui.drawSword(ctx, startX, btnY, btnW, btnH, 0, rs);
+    if (rs > 0) {
+      ctx.font = 'bold 16px monospace';
+      ctx.globalAlpha = rs;
+      const startTextX = startX + btnW * 0.52 + osx;
+      ctx.fillStyle = 'rgba(0,0,0,0.5)';
+      ctx.fillText('START', startTextX + 1, btnY + btnH * 0.58 + 1);
+      ctx.fillStyle = '#fff';
+      ctx.fillText('START', startTextX, btnY + btnH * 0.58);
+      ctx.globalAlpha = 1;
+    }
 
     ctx.font = `bold ${Math.max(9, hintSize)}px monospace`;
     ctx.fillStyle = selColor;
     ctx.fillText(`${DIFFICULTIES[this.selectedIndex].label}  •  ${MAP_OPTIONS[this.mapIndex].label}`, w / 2, btnY + btnH + 14);
-
-    ctx.font = `${hintSize}px monospace`;
-    ctx.fillStyle = 'rgba(255,255,255,0.4)';
-    ctx.fillText('ESC to go back', w / 2, h - 6);
   }
 }

@@ -6,9 +6,9 @@ import { UNIT_STATS, RACE_COLORS, UPGRADE_TREES } from '../simulation/data';
 import { getUnitUpgradeMultipliers } from '../simulation/GameState';
 import { PartyManager, PartyState, PartyPlayer, getPartyPlayerCount } from '../network/PartyManager';
 import { isFirebaseConfigured, initFirebase } from '../network/FirebaseService';
-import { PlayerProfile, ALL_AVATARS } from '../profile/ProfileData';
+import { PlayerProfile, ALL_AVATARS, loadProfile } from '../profile/ProfileData';
 import { BotDifficultyLevel } from '../simulation/BotAI';
-import { getMapById } from '../simulation/maps';
+import { getMapById, ALL_MAPS } from '../simulation/maps';
 import { SoundManager } from '../audio/SoundManager';
 import { getAudioSettings, subscribeToAudioSettings, updateAudioSettings } from '../audio/AudioSettings';
 import { drawSettingsButton, drawSettingsOverlay, getSettingsOverlayLayout, hitRect as hitOverlayRect, sliderValueFromPoint } from '../ui/SettingsOverlay';
@@ -19,6 +19,74 @@ const PARTY_DIFFICULTY_OPTIONS: { level: BotDifficultyLevel; label: string; colo
   { level: BotDifficultyLevel.Hard, label: 'HARD', color: '#ff9100' },
   { level: BotDifficultyLevel.Nightmare, label: 'NITE', color: '#ff1744' },
 ];
+
+// ─── Local party setup (no Firebase required) ───
+
+export interface LocalSetup {
+  mapId: string;
+  maxSlots: number;
+  /** Per-slot bot difficulty. Missing key = empty slot. */
+  bots: { [slot: string]: string };
+  /** Per-slot bot race. Missing key or 'random' = random at game start. */
+  botRaces?: { [slot: string]: string };
+  playerSlot: number;
+  playerRace: Race | 'random';
+}
+
+const LOCAL_SETUP_KEY = 'spawnwars.localSetup';
+
+function saveLocalSetup(setup: LocalSetup): void {
+  try { localStorage.setItem(LOCAL_SETUP_KEY, JSON.stringify(setup)); } catch {}
+}
+
+function loadLocalSetup(): LocalSetup | null {
+  try {
+    const raw = localStorage.getItem(LOCAL_SETUP_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed.mapId === 'string' && typeof parsed.maxSlots === 'number') {
+      return parsed as LocalSetup;
+    }
+  } catch {}
+  return null;
+}
+
+function createDefaultLocalSetup(race: Race): LocalSetup {
+  const mapDef = getMapById('duel');
+  const ppt = mapDef.playersPerTeam;
+  // Fill enemy team (team 2) with Medium bots
+  const bots: { [slot: string]: string } = {};
+  for (let i = ppt; i < mapDef.maxPlayers; i++) {
+    bots[String(i)] = BotDifficultyLevel.Medium;
+  }
+  return {
+    mapId: 'duel',
+    maxSlots: mapDef.maxPlayers,
+    bots,
+    playerSlot: 0,
+    playerRace: race,
+  };
+}
+
+/** Check if each team has at least 1 occupied slot (player or bot). */
+function canStartLocalSetup(setup: LocalSetup): boolean {
+  const mapDef = getMapById(setup.mapId);
+  const ppt = mapDef.playersPerTeam;
+  const teams = mapDef.teams.length;
+  for (let t = 0; t < teams; t++) {
+    const start = t * ppt;
+    const end = start + ppt;
+    let hasOccupant = false;
+    for (let i = start; i < end; i++) {
+      if (i === setup.playerSlot || setup.bots[String(i)]) {
+        hasOccupant = true;
+        break;
+      }
+    }
+    if (!hasOccupant) return false;
+  }
+  return true;
+}
 
 // ─── Mini 1v1 simulation using real game stats ───
 
@@ -75,14 +143,23 @@ interface DuelProjectile {
 const TIER2_PATHS = [['A', 'B'], ['A', 'C']];
 const TIER3_PATHS = [['A', 'B', 'D'], ['A', 'B', 'E'], ['A', 'C', 'F'], ['A', 'C', 'G']];
 
-function createDuelUnit(race: Race, unitType: BuildingType, x: number, facingLeft: boolean, playerId: number, tier: 1 | 2 | 3 = 1): DuelUnit {
+/** Get effective spawn count for a duel unit from its upgrade path + base stats. */
+function getSpawnCountForUnit(race: Race, unitType: BuildingType, upgradePath: string[]): number {
+  const stats = UNIT_STATS[race]?.[unitType];
+  const baseCount = stats?.spawnCount ?? 1;
+  const upgrade = getUnitUpgradeMultipliers(upgradePath, race, unitType);
+  return upgrade.special.spawnCount ?? baseCount;
+}
+
+function pickUpgradePath(tier: 1 | 2 | 3): string[] {
+  if (tier === 2) return TIER2_PATHS[Math.floor(Math.random() * TIER2_PATHS.length)];
+  if (tier === 3) return TIER3_PATHS[Math.floor(Math.random() * TIER3_PATHS.length)];
+  return ['A'];
+}
+
+function createDuelUnit(race: Race, unitType: BuildingType, x: number, facingLeft: boolean, playerId: number, tier: 1 | 2 | 3 = 1, fixedPath?: string[]): DuelUnit {
   const stats = UNIT_STATS[race][unitType]!;
-  let upgradePath = ['A'];
-  if (tier === 2) {
-    upgradePath = TIER2_PATHS[Math.floor(Math.random() * TIER2_PATHS.length)];
-  } else if (tier === 3) {
-    upgradePath = TIER3_PATHS[Math.floor(Math.random() * TIER3_PATHS.length)];
-  }
+  const upgradePath = fixedPath ?? pickUpgradePath(tier);
   const upgrade = getUnitUpgradeMultipliers(upgradePath, race, unitType);
   const upgradeNode = upgradePath[upgradePath.length - 1];
 
@@ -632,6 +709,8 @@ export class TitleScene implements Scene {
   private mouseMoveHandler: ((e: MouseEvent) => void) | null = null;
   private mouseUpHandler: ((e: MouseEvent) => void) | null = null;
   onPartyStart: ((party: PartyState, localSlot: number) => void) | null = null;
+  onLocalStart: ((setup: LocalSetup) => void) | null = null;
+  private localSetup: LocalSetup | null = null;
 
   constructor(manager: SceneManager, canvas: HTMLCanvasElement, ui: UIAssets, sprites: SpriteLoader) {
     this.manager = manager;
@@ -667,9 +746,13 @@ export class TitleScene implements Scene {
     });
     this.joinCodeInput = '';
     this.joinInputActive = false;
+    this.localSetup = null;
     this.partyError = '';
     this.partyStartFired = false;
     this.matchmaking = false;
+
+    // Reload profile (picks up avatar changes from ProfileScene)
+    this.profile = loadProfile();
 
     // Listen for party state changes
     if (this.party) {
@@ -722,15 +805,37 @@ export class TitleScene implements Scene {
 
     // Drag-and-drop handlers for party slot rearrangement
     this.mouseDownHandler = (e: MouseEvent) => {
-      if (!this.partyState || !this.party?.isHost) return;
       const rect = this.canvas.getBoundingClientRect();
       const cx = e.clientX - rect.left;
       const cy = e.clientY - rect.top;
+
+      // Local setup drag
+      if (this.localSetup) {
+        const pl = this.getLocalSetupLayout();
+        for (let i = 0; i < this.localSetup.maxSlots; i++) {
+          const sr = pl.slotRects[i];
+          const pad = 15;
+          if (cx >= sr.x - pad && cx <= sr.x + sr.w + pad && cy >= sr.y - pad && cy <= sr.y + sr.h + pad) {
+            // Can drag any occupied slot (player or bot)
+            if (i === this.localSetup.playerSlot || this.localSetup.bots[String(i)]) {
+              this.dragSlot = i;
+              this.dragStartX = cx;
+              this.dragStartY = cy;
+              this.dragX = cx;
+              this.dragY = cy;
+              this.isDragging = false;
+            }
+            break;
+          }
+        }
+        return;
+      }
+
+      // Firebase party drag
+      if (!this.partyState || !this.party?.isHost) return;
       const pl = this.getPartyLayout();
-      // Check if mousedown is on a filled player slot
       for (let i = 0; i < (this.partyState.maxSlots ?? 4); i++) {
         const sr = pl.slotRects[i];
-        // Use a larger hit area for drag initiation
         const pad = 15;
         if (cx >= sr.x - pad && cx <= sr.x + sr.w + pad && cy >= sr.y - pad && cy <= sr.y + sr.h + pad) {
           const hasPlayer = !!this.partyState.players[String(i)];
@@ -759,17 +864,40 @@ export class TitleScene implements Scene {
       }
     };
     this.mouseUpHandler = (e: MouseEvent) => {
-      if (this.dragSlot < 0 || !this.isDragging || !this.partyState || !this.party) {
+      if (this.dragSlot < 0 || !this.isDragging) {
         this.dragSlot = -1;
         this.isDragging = false;
         return;
       }
-      this.dragJustEnded = true; // suppress the click event that follows mouseup
+      this.dragJustEnded = true;
       const rect = this.canvas.getBoundingClientRect();
       const cx = e.clientX - rect.left;
       const cy = e.clientY - rect.top;
+
+      // Local setup drop
+      if (this.localSetup) {
+        const pl = this.getLocalSetupLayout();
+        for (let i = 0; i < this.localSetup.maxSlots; i++) {
+          if (i === this.dragSlot) continue;
+          const sr = pl.slotRects[i];
+          const pad = 15;
+          if (cx >= sr.x - pad && cx <= sr.x + sr.w + pad && cy >= sr.y - pad && cy <= sr.y + sr.h + pad) {
+            this.localSetupSwapSlots(this.dragSlot, i);
+            break;
+          }
+        }
+        this.dragSlot = -1;
+        this.isDragging = false;
+        return;
+      }
+
+      // Firebase party drop
+      if (!this.partyState || !this.party) {
+        this.dragSlot = -1;
+        this.isDragging = false;
+        return;
+      }
       const pl = this.getPartyLayout();
-      // Find drop target slot
       for (let i = 0; i < (this.partyState.maxSlots ?? 4); i++) {
         if (i === this.dragSlot) continue;
         const sr = pl.slotRects[i];
@@ -918,6 +1046,48 @@ export class TitleScene implements Scene {
     };
   }
 
+  private getLocalSetupLayout(): {
+    panel: { x: number; y: number; w: number; h: number };
+    slotRects: { x: number; y: number; w: number; h: number }[];
+    start: { x: number; y: number; w: number; h: number };
+    leave: { x: number; y: number; w: number; h: number };
+    mapToggle: { x: number; y: number; w: number; h: number };
+  } {
+    const w = this.canvas.clientWidth;
+    const h = this.canvas.clientHeight;
+    const maxSlots = this.localSetup?.maxSlots ?? 4;
+    const panelW = Math.min(w * 0.98, 616);
+    const panelH = Math.min(h * 0.52, 370);
+    const px = (w - panelW) / 2;
+    const py = h * 0.26;
+    const slotH = 70;
+    const slotY = py + panelH * 0.34;
+
+    const slotRects: { x: number; y: number; w: number; h: number }[] = [];
+    const colW = panelW / maxSlots;
+    for (let i = 0; i < maxSlots; i++) {
+      slotRects.push({
+        x: px + colW * i + 4,
+        y: slotY,
+        w: colW - 8,
+        h: slotH,
+      });
+    }
+
+    const mapTogW = panelW * 0.5;
+    const mapTogH = 24;
+    const mapTogX = px + (panelW - mapTogW) / 2;
+    const mapTogY = py + panelH * 0.12;
+
+    return {
+      panel: { x: px, y: py, w: panelW, h: panelH },
+      slotRects,
+      start: { x: px + panelW * 0.15, y: py + panelH - 56, w: panelW * 0.42, h: 44 },
+      leave: { x: px + panelW * 0.60, y: py + panelH - 56, w: panelW * 0.28, h: 44 },
+      mapToggle: { x: mapTogX, y: mapTogY, w: mapTogW, h: mapTogH },
+    };
+  }
+
   private hitRect(cx: number, cy: number, r: { x: number; y: number; w: number; h: number }): boolean {
     // Inflate hit area by pad on each side for mobile tappability (min 44px targets)
     const pad = 6;
@@ -968,6 +1138,55 @@ export class TitleScene implements Scene {
       this.waitTimer = 0.5;
       this.blueTeam = [];
       this.redTeam = [];
+      return;
+    }
+
+    // If in local setup mode, handle local setup UI
+    if (this.localSetup) {
+      const pl = this.getLocalSetupLayout();
+      const ls = this.localSetup;
+      // Click own slot's race icon to cycle
+      if (pl.slotRects[ls.playerSlot] && this.hitRect(cx, cy, pl.slotRects[ls.playerSlot])) {
+        this.cycleRace();
+        return;
+      }
+      // Click non-player slots: sprite area (slotRect) = cycle race, below = cycle difficulty
+      for (let i = 0; i < ls.maxSlots; i++) {
+        if (i === ls.playerSlot) continue;
+        const sr = pl.slotRects[i];
+        if (!sr) continue;
+        // Extended hit area: slot rect + 40px below for the difficulty/hint text
+        const extendedRect = { x: sr.x, y: sr.y, w: sr.w, h: sr.h + 40 };
+        if (this.hitRect(cx, cy, extendedRect)) {
+          if (!ls.bots[String(i)]) {
+            // Empty slot — any click adds a bot
+            this.localSetupCycleBot(i);
+          } else if (cy <= sr.y + sr.h) {
+            // Click on sprite area — cycle race
+            this.cycleBotRace(i);
+          } else {
+            // Click below sprite (difficulty label area) — cycle difficulty
+            this.localSetupCycleBot(i);
+          }
+          return;
+        }
+      }
+      // Map toggle
+      if (this.hitRect(cx, cy, pl.mapToggle)) {
+        this.localSetupChangeMap();
+        return;
+      }
+      // Start button
+      if (this.hitRect(cx, cy, pl.start) && canStartLocalSetup(ls)) {
+        if (this.onLocalStart) this.onLocalStart(ls);
+        this.localSetup = null;
+        return;
+      }
+      // Leave / back button
+      if (this.hitRect(cx, cy, pl.leave)) {
+        this.localSetup = null;
+        return;
+      }
       return;
     }
 
@@ -1073,7 +1292,7 @@ export class TitleScene implements Scene {
       return;
     }
     if (this.hitRect(cx, cy, btns.create)) {
-      this.doCreateParty();
+      this.doLocalSetup();
       return;
     }
     if (this.hitRect(cx, cy, btns.gallery)) {
@@ -1136,16 +1355,110 @@ export class TitleScene implements Scene {
     }
   }
 
-  private async doCreateParty(): Promise<void> {
-    try {
-      await this.ensureFirebase();
-      this.party!.localName = this.playerName;
-      await this.party!.createParty(Race.Crown);
-    } catch (e: any) {
-      console.error('[Party] Create failed:', e);
-      this.showPartyError(e.message || 'Failed to create party');
+  private doLocalSetup(): void {
+    // Load saved setup or create default
+    const saved = loadLocalSetup();
+    if (saved) {
+      // Validate saved setup is still valid
+      const mapDef = getMapById(saved.mapId);
+      if (mapDef && saved.maxSlots === mapDef.maxPlayers) {
+        this.localSetup = saved;
+      } else {
+        this.localSetup = createDefaultLocalSetup(Race.Crown);
+      }
+    } else {
+      this.localSetup = createDefaultLocalSetup(Race.Crown);
     }
   }
+
+  private localSetupCycleBot(slot: number): void {
+    if (!this.localSetup) return;
+    if (slot === this.localSetup.playerSlot) return; // can't replace yourself
+    const current = this.localSetup.bots[String(slot)] ?? null;
+    const cycle: (string | null)[] = [null, BotDifficultyLevel.Easy, BotDifficultyLevel.Medium, BotDifficultyLevel.Hard, BotDifficultyLevel.Nightmare];
+    const curIdx = current ? cycle.indexOf(current) : 0;
+    const nextIdx = (curIdx + 1) % cycle.length;
+    const next = cycle[nextIdx];
+    if (next) {
+      this.localSetup.bots[String(slot)] = next;
+    } else {
+      delete this.localSetup.bots[String(slot)];
+      // Clean up race when removing bot
+      if (this.localSetup.botRaces) delete this.localSetup.botRaces[String(slot)];
+    }
+    saveLocalSetup(this.localSetup);
+  }
+
+  private localSetupSwapSlots(slotA: number, slotB: number): void {
+    if (!this.localSetup || slotA === slotB) return;
+    const botA = this.localSetup.bots[String(slotA)] ?? null;
+    const botB = this.localSetup.bots[String(slotB)] ?? null;
+    const isPlayerA = this.localSetup.playerSlot === slotA;
+    const isPlayerB = this.localSetup.playerSlot === slotB;
+
+    // Swap bots
+    if (botA) this.localSetup.bots[String(slotB)] = botA; else delete this.localSetup.bots[String(slotB)];
+    if (botB) this.localSetup.bots[String(slotA)] = botB; else delete this.localSetup.bots[String(slotA)];
+
+    // Swap bot races
+    if (this.localSetup.botRaces) {
+      const raceA = this.localSetup.botRaces[String(slotA)] ?? null;
+      const raceB = this.localSetup.botRaces[String(slotB)] ?? null;
+      if (raceA) this.localSetup.botRaces[String(slotB)] = raceA; else delete this.localSetup.botRaces[String(slotB)];
+      if (raceB) this.localSetup.botRaces[String(slotA)] = raceB; else delete this.localSetup.botRaces[String(slotA)];
+    }
+
+    // Swap player slot if involved
+    if (isPlayerA) this.localSetup.playerSlot = slotB;
+    else if (isPlayerB) this.localSetup.playerSlot = slotA;
+
+    saveLocalSetup(this.localSetup);
+  }
+
+  private localSetupChangeMap(): void {
+    if (!this.localSetup) return;
+    const currentIdx = ALL_MAPS.findIndex(m => m.id === this.localSetup!.mapId);
+    const nextMap = ALL_MAPS[(currentIdx + 1) % ALL_MAPS.length];
+    const ppt = nextMap.playersPerTeam;
+
+    // Resolve player slot first (may shrink if new map has fewer slots)
+    let playerSlot = this.localSetup.playerSlot;
+    if (playerSlot >= nextMap.maxPlayers) playerSlot = 0;
+    const playerTeam = Math.floor(playerSlot / ppt);
+
+    // Rebuild bots for new map
+    const oldBots = { ...this.localSetup.bots };
+    const bots: { [slot: string]: string } = {};
+
+    for (let i = 0; i < nextMap.maxPlayers; i++) {
+      if (i === playerSlot) continue; // never overwrite the player's slot
+      const slotTeam = Math.floor(i / ppt);
+      if (oldBots[String(i)]) {
+        bots[String(i)] = oldBots[String(i)];
+      } else if (slotTeam !== playerTeam) {
+        // Enemy team: fill with Medium by default
+        bots[String(i)] = BotDifficultyLevel.Medium;
+      }
+    }
+
+    // Preserve bot races for slots that still exist
+    const oldBotRaces = this.localSetup.botRaces ?? {};
+    const botRaces: { [slot: string]: string } = {};
+    for (const [slot, race] of Object.entries(oldBotRaces)) {
+      if (bots[slot]) botRaces[slot] = race;
+    }
+
+    this.localSetup = {
+      mapId: nextMap.id,
+      maxSlots: nextMap.maxPlayers,
+      bots,
+      botRaces: Object.keys(botRaces).length > 0 ? botRaces : undefined,
+      playerSlot,
+      playerRace: this.localSetup.playerRace,
+    };
+    saveLocalSetup(this.localSetup);
+  }
+
 
   private async doJoinParty(): Promise<void> {
     if (this.joinCodeInput.length < 4) return;
@@ -1162,13 +1475,33 @@ export class TitleScene implements Scene {
   }
 
   private cycleRace(): void {
+    // Cycle order: Crown → Horde → ... → Tenders → Random → Crown → ...
+    const raceOrder: (Race | 'random')[] = [...ALL_RACES, 'random'];
+    if (this.localSetup) {
+      const currentRace = this.localSetup.playerRace;
+      const idx = raceOrder.indexOf(currentRace);
+      this.localSetup.playerRace = raceOrder[(idx + 1) % raceOrder.length];
+      saveLocalSetup(this.localSetup);
+      return;
+    }
     if (!this.party || !this.partyState) return;
     const localSlot = this.party.localSlotIndex;
     const myPlayer = this.partyState.players[String(localSlot)];
     const currentRace = myPlayer?.race ?? Race.Crown;
-    const idx = ALL_RACES.indexOf(currentRace);
-    const nextRace = ALL_RACES[(idx + 1) % ALL_RACES.length];
-    this.party.updateRace(nextRace);
+    const idx = raceOrder.indexOf(currentRace);
+    const nextRace = raceOrder[(idx + 1) % raceOrder.length];
+    this.party.updateRace(nextRace as Race);
+  }
+
+  private cycleBotRace(slot: number): void {
+    if (!this.localSetup) return;
+    if (!this.localSetup.botRaces) this.localSetup.botRaces = {};
+    const raceOrder: (string)[] = ['random', ...ALL_RACES];
+    const current = this.localSetup.botRaces[String(slot)] ?? 'random';
+    const idx = raceOrder.indexOf(current);
+    const next = raceOrder[(idx + 1) % raceOrder.length];
+    this.localSetup.botRaces[String(slot)] = next;
+    saveLocalSetup(this.localSetup);
   }
 
   private showPartyError(msg: string): void {
@@ -1179,6 +1512,8 @@ export class TitleScene implements Scene {
   private spawnDuel(): void {
     this.blueTeam = [];
     this.redTeam = [];
+    this.bannerBlue = [];
+    this.bannerRed = [];
 
     for (let i = 0; i < this.duelTeamSize; i++) {
       const blueRace = ALL_RACES[Math.floor(Math.random() * ALL_RACES.length)];
@@ -1186,12 +1521,21 @@ export class TitleScene implements Scene {
       const blueType = UNIT_TYPES[Math.floor(Math.random() * UNIT_TYPES.length)];
       const redType = UNIT_TYPES[Math.floor(Math.random() * UNIT_TYPES.length)];
 
-      this.blueTeam.push(createDuelUnit(blueRace, blueType, -2 - i * 2, false, 0, this.duelTier));
-      this.redTeam.push(createDuelUnit(redRace, redType, ARENA_WIDTH + 2 + i * 2, true, 2, this.duelTier));
+      const bluePath = pickUpgradePath(this.duelTier);
+      const redPath = pickUpgradePath(this.duelTier);
+      const blueCount = getSpawnCountForUnit(blueRace, blueType, bluePath);
+      const redCount = getSpawnCountForUnit(redRace, redType, redPath);
+      for (let si = 0; si < blueCount; si++) {
+        const u = createDuelUnit(blueRace, blueType, -2 - i * 2 - si * 0.6, false, 0, this.duelTier, bluePath);
+        this.blueTeam.push(u);
+        if (si === 0) this.bannerBlue.push(u); // one banner entry per spawn group
+      }
+      for (let si = 0; si < redCount; si++) {
+        const u = createDuelUnit(redRace, redType, ARENA_WIDTH + 2 + i * 2 + si * 0.6, true, 2, this.duelTier, redPath);
+        this.redTeam.push(u);
+        if (si === 0) this.bannerRed.push(u); // one banner entry per spawn group
+      }
     }
-
-    this.bannerBlue = this.blueTeam;
-    this.bannerRed = this.redTeam;
     this.projectiles = [];
     this.waiting = false;
     this.winnerLeaving = false;
@@ -1575,7 +1919,9 @@ export class TitleScene implements Scene {
     ctx.fillText('Build. Spawn. Conquer.', w / 2, subY + subH * 0.5);
 
     // === Buttons or Party Panel ===
-    if (this.partyState) {
+    if (this.localSetup) {
+      this.renderLocalSetupPanel(ctx, w, h);
+    } else if (this.partyState) {
       this.renderPartyPanel(ctx, w, h);
     } else if (this.joinInputActive) {
       this.renderJoinInput(ctx, w, h);
@@ -1620,39 +1966,45 @@ export class TitleScene implements Scene {
   private renderMenuButtons(ctx: CanvasRenderingContext2D, _w: number, _h: number): void {
     const btns = this.getButtonLayout();
     const pulse = 0.6 + 0.4 * Math.sin(this.pulseTime / 500);
+    const r = (i: number) => UIAssets.swordReveal(this.pulseTime, i);
 
     // PLAY SOLO — blue sword (pulsing)
+    const r0 = r(0);
     ctx.shadowColor = '#4fc3f7';
     ctx.shadowBlur = 12 * (0.3 + 0.3 * Math.sin(this.pulseTime / 400));
-    this.ui.drawSword(ctx, btns.solo.x, btns.solo.y, btns.solo.w, btns.solo.h, 0);
+    const ox0 = this.ui.drawSword(ctx, btns.solo.x, btns.solo.y, btns.solo.w, btns.solo.h, 0, r0);
     ctx.shadowBlur = 0;
-    this.drawSwordLabel(ctx, btns.solo, 'PLAY SOLO', pulse);
+    if (r0 > 0) this.drawSwordLabel(ctx, btns.solo, 'PLAY SOLO', pulse * r0, ox0);
 
     // FIND GAME — red sword (pulsing when searching)
+    const r1 = r(1);
     if (this.matchmaking) {
       this.matchmakingDots = (this.matchmakingDots + 0.02) % 4;
       const dots = '.'.repeat(Math.floor(this.matchmakingDots));
       ctx.shadowColor = '#ff9800';
       ctx.shadowBlur = 12 * (0.3 + 0.3 * Math.sin(this.pulseTime / 300));
-      this.ui.drawSword(ctx, btns.findGame.x, btns.findGame.y, btns.findGame.w, btns.findGame.h, 1);
+      const ox1 = this.ui.drawSword(ctx, btns.findGame.x, btns.findGame.y, btns.findGame.w, btns.findGame.h, 1, r1);
       ctx.shadowBlur = 0;
-      this.drawSwordLabel(ctx, btns.findGame, `SEARCHING${dots}`, 0.6 + 0.4 * Math.sin(this.pulseTime / 300));
+      if (r1 > 0) this.drawSwordLabel(ctx, btns.findGame, `SEARCHING${dots}`, (0.6 + 0.4 * Math.sin(this.pulseTime / 300)) * r1, ox1);
     } else {
-      this.ui.drawSword(ctx, btns.findGame.x, btns.findGame.y, btns.findGame.w, btns.findGame.h, 1);
-      this.drawSwordLabel(ctx, btns.findGame, 'FIND GAME', 1);
+      const ox1 = this.ui.drawSword(ctx, btns.findGame.x, btns.findGame.y, btns.findGame.w, btns.findGame.h, 1, r1);
+      if (r1 > 0) this.drawSwordLabel(ctx, btns.findGame, 'FIND GAME', r1, ox1);
     }
 
     // CREATE PARTY — yellow sword
-    this.ui.drawSword(ctx, btns.create.x, btns.create.y, btns.create.w, btns.create.h, 2);
-    this.drawSwordLabel(ctx, btns.create, 'CREATE PARTY', 1);
+    const r2 = r(2);
+    const ox2 = this.ui.drawSword(ctx, btns.create.x, btns.create.y, btns.create.w, btns.create.h, 2, r2);
+    if (r2 > 0) this.drawSwordLabel(ctx, btns.create, 'CREATE PARTY', r2, ox2);
 
     // JOIN PARTY — purple sword
-    this.ui.drawSword(ctx, btns.join.x, btns.join.y, btns.join.w, btns.join.h, 3);
-    this.drawSwordLabel(ctx, btns.join, 'JOIN PARTY', 1);
+    const r3 = r(3);
+    const ox3 = this.ui.drawSword(ctx, btns.join.x, btns.join.y, btns.join.w, btns.join.h, 3, r3);
+    if (r3 > 0) this.drawSwordLabel(ctx, btns.join, 'JOIN PARTY', r3, ox3);
 
     // UNIT GALLERY — dark sword
-    this.ui.drawSword(ctx, btns.gallery.x, btns.gallery.y, btns.gallery.w, btns.gallery.h, 4);
-    this.drawSwordLabel(ctx, btns.gallery, 'UNIT GALLERY', 1);
+    const r4 = r(4);
+    const ox4 = this.ui.drawSword(ctx, btns.gallery.x, btns.gallery.y, btns.gallery.w, btns.gallery.h, 4, r4);
+    if (r4 > 0) this.drawSwordLabel(ctx, btns.gallery, 'UNIT GALLERY', r4, ox4);
   }
 
   private drawSwordLabel(
@@ -1660,13 +2012,14 @@ export class TitleScene implements Scene {
     rect: { x: number; y: number; w: number; h: number },
     text: string,
     alpha: number,
+    offsetX = 0,
   ): void {
     const fontSize = Math.max(11, Math.min(rect.h * 0.32, 18));
     ctx.font = `bold ${fontSize}px monospace`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.globalAlpha = alpha;
-    const tx = rect.x + rect.w * 0.52;
+    const tx = rect.x + rect.w * 0.52 + offsetX;
     const ty = rect.y + rect.h * 0.5;
     ctx.fillStyle = 'rgba(0,0,0,0.6)';
     ctx.fillText(text, tx + 1, ty + 1);
@@ -1793,23 +2146,286 @@ export class TitleScene implements Scene {
     ctx.font = `bold ${labelSize}px monospace`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillStyle = '#fff';
+    ctx.fillStyle = '#3a2a1a';
     ctx.fillText('ENTER INVITE CODE', w / 2, boxY + boxH * 0.25);
 
     // Code display
     const codeSize = Math.max(18, Math.min(boxH * 0.28, 32));
     ctx.font = `bold ${codeSize}px monospace`;
     const display = this.joinCodeInput + (Math.floor(this.animTime * 2) % 2 === 0 ? '_' : ' ');
-    ctx.fillStyle = '#ffe082';
+    ctx.fillStyle = '#8b4513';
     ctx.fillText(display, w / 2, boxY + boxH * 0.52);
 
     // Hint
     ctx.font = `${Math.max(9, labelSize * 0.8)}px monospace`;
-    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.fillStyle = 'rgba(60,40,20,0.55)';
     ctx.fillText('Type code + Enter  |  ESC to cancel', w / 2, boxY + boxH * 0.78);
   }
 
   // ─── Render: Party panel ───
+
+  // ─── Render: Local setup panel (no Firebase) ───
+
+  private renderLocalSetupPanel(ctx: CanvasRenderingContext2D, w: number, _h: number): void {
+    const pl = this.getLocalSetupLayout();
+    const ls = this.localSetup!;
+    const maxSlots = ls.maxSlots;
+    const mapDef = getMapById(ls.mapId);
+    const playersPerTeam = mapDef.playersPerTeam;
+
+    // Panel background
+    const ppPadX = Math.round(pl.panel.w * 0.075);
+    const ppPadY = Math.round(pl.panel.h * 0.05);
+    this.ui.drawWoodTable(ctx, pl.panel.x - ppPadX, pl.panel.y - ppPadY, pl.panel.w + ppPadX * 2, pl.panel.h + ppPadY * 2);
+
+    const fontSize = Math.max(10, Math.min(pl.panel.w / 28, 15));
+
+    // Header
+    const headerH = 28;
+    const headerY = pl.panel.y + 6;
+    this.ui.drawSmallRibbon(ctx, pl.panel.x + pl.panel.w * 0.2, headerY, pl.panel.w * 0.6, headerH, 0); // blue
+    ctx.font = `bold ${Math.max(11, headerH * 0.45)}px monospace`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#fff';
+    ctx.fillText('GAME SETUP', w / 2, headerY + headerH * 0.5);
+
+    // Map toggle
+    {
+      const mt = pl.mapToggle;
+      const mapLabel = ls.mapId === 'skirmish' ? 'SKIRMISH (3v3)' : 'DUEL (2v2)';
+      ctx.fillStyle = 'rgba(0,0,0,0.25)';
+      ctx.fillRect(mt.x, mt.y, mt.w, mt.h);
+      ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(mt.x, mt.y, mt.w, mt.h);
+      const mtFontSize = Math.max(8, mt.h * 0.5);
+      ctx.font = `bold ${mtFontSize}px monospace`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#fff';
+      ctx.fillText(`MAP: ${mapLabel}`, mt.x + mt.w / 2, mt.y + mt.h / 2);
+      ctx.fillStyle = 'rgba(255,255,255,0.6)';
+      ctx.fillText('<', mt.x + 10, mt.y + mt.h / 2);
+      ctx.fillText('>', mt.x + mt.w - 10, mt.y + mt.h / 2);
+    }
+
+    // Team color backgrounds
+    const colW = pl.panel.w / maxSlots;
+    const teamColors = ['rgba(50,100,220,0.12)', 'rgba(220,50,50,0.12)'];
+    const teamBorderColors = ['rgba(80,140,255,0.35)', 'rgba(255,80,80,0.35)'];
+    const teamLabels = ['TEAM 1', 'TEAM 2'];
+    const slotAreaTop = pl.panel.y + pl.panel.h * 0.26;
+    const slotAreaBot = pl.panel.y + pl.panel.h * 0.80;
+
+    for (let t = 0; t < mapDef.teams.length; t++) {
+      const startSlot = t * playersPerTeam;
+      const endSlot = startSlot + playersPerTeam;
+      const x0 = pl.panel.x + colW * startSlot + 2;
+      const x1 = pl.panel.x + colW * endSlot - 2;
+      const r = 6;
+      ctx.fillStyle = teamColors[t % teamColors.length];
+      ctx.beginPath();
+      ctx.moveTo(x0 + r, slotAreaTop); ctx.lineTo(x1 - r, slotAreaTop);
+      ctx.arcTo(x1, slotAreaTop, x1, slotAreaTop + r, r);
+      ctx.lineTo(x1, slotAreaBot - r);
+      ctx.arcTo(x1, slotAreaBot, x1 - r, slotAreaBot, r);
+      ctx.lineTo(x0 + r, slotAreaBot);
+      ctx.arcTo(x0, slotAreaBot, x0, slotAreaBot - r, r);
+      ctx.lineTo(x0, slotAreaTop + r);
+      ctx.arcTo(x0, slotAreaTop, x0 + r, slotAreaTop, r);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = teamBorderColors[t % teamBorderColors.length];
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      const teamLabelSize = Math.max(7, fontSize * 0.6);
+      ctx.font = `bold ${teamLabelSize}px monospace`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      ctx.fillStyle = teamBorderColors[t % teamBorderColors.length];
+      ctx.fillText(teamLabels[t] ?? `TEAM ${t + 1}`, (x0 + x1) / 2, slotAreaTop + 3);
+    }
+
+    // Team divider
+    const divX = pl.panel.x + colW * playersPerTeam;
+    ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(divX, slotAreaTop);
+    ctx.lineTo(divX, slotAreaBot);
+    ctx.stroke();
+
+    // Render slots
+    for (let i = 0; i < maxSlots; i++) {
+      const slotRect = pl.slotRects[i];
+      const isPlayer = i === ls.playerSlot;
+      const botDiff = ls.bots[String(i)] ?? null;
+
+      if (this.isDragging && this.dragSlot === i) ctx.globalAlpha = 0.3;
+
+      if (isPlayer) {
+        const slotCx = pl.panel.x + colW * i + colW / 2;
+        if (ls.playerRace === 'random') {
+          // Random player — show ? icon and RANDOM label
+          ctx.font = `bold ${Math.max(18, fontSize * 2)}px monospace`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillStyle = 'rgba(255,220,100,0.8)';
+          ctx.fillText('?', slotCx, slotRect.y + 20);
+
+          ctx.font = `bold ${Math.max(8, fontSize * 0.75)}px monospace`;
+          ctx.fillStyle = 'rgba(255,220,100,0.9)';
+          ctx.fillText('RANDOM', slotCx, slotRect.y + 40);
+
+          ctx.font = `${Math.max(9, fontSize * 0.85)}px monospace`;
+          ctx.fillStyle = '#fff';
+          ctx.fillText(this.playerName, slotCx, slotRect.y + 52);
+
+          ctx.font = `${Math.max(7, fontSize * 0.6)}px monospace`;
+          ctx.fillStyle = 'rgba(255,255,255,0.35)';
+          ctx.fillText('click to change', slotCx, slotRect.y - 6);
+        } else {
+          const fakePlayer: PartyPlayer = { uid: 'local', name: this.playerName, race: ls.playerRace };
+          this.renderPlayerSlot(ctx, pl.panel.x + colW * i, pl.panel.y + pl.panel.h * 0.30, colW, fakePlayer, true, slotRect, true, i);
+        }
+      } else if (botDiff) {
+        // Bot slot — render like a player slot but with difficulty label on top
+        const slotCx = pl.panel.x + colW * i + colW / 2;
+        const diffOpt = PARTY_DIFFICULTY_OPTIONS.find(d => d.level === botDiff);
+        const diffLabel = diffOpt?.label ?? botDiff.toUpperCase();
+        const diffColor = diffOpt?.color ?? '#aaa';
+        const botRace = ls.botRaces?.[String(i)] ?? 'random';
+
+        // Race sprite (capped to slot height so it doesn't overflow)
+        const iconSize = Math.min(slotRect.w, slotRect.h);
+        if (botRace !== 'random') {
+          const spriteData = this.sprites.getUnitSprite(botRace as Race, 'melee', i);
+          if (spriteData) {
+            const [img, def] = spriteData;
+            const frame = Math.floor(this.animTime * 5) % def.cols;
+            const gY = def.groundY ?? 0.71;
+            const drawY = slotRect.y + slotRect.h - iconSize * gY;
+            drawSpriteFrame(ctx, img, def, frame, slotCx - iconSize / 2, drawY, iconSize, iconSize);
+          }
+          const colors = RACE_COLORS[botRace as Race];
+          ctx.font = `bold ${fontSize}px monospace`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'top';
+          ctx.fillStyle = colors?.primary ?? '#aaa';
+          ctx.fillText(RACE_LABELS[botRace as Race] ?? botRace, slotCx, slotRect.y + slotRect.h + 6);
+        } else {
+          ctx.font = `bold ${Math.max(18, fontSize * 2)}px monospace`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillStyle = 'rgba(255,220,100,0.6)';
+          ctx.fillText('?', slotCx, slotRect.y + slotRect.h * 0.5);
+          ctx.font = `bold ${Math.max(8, fontSize * 0.75)}px monospace`;
+          ctx.textBaseline = 'top';
+          ctx.fillStyle = 'rgba(255,220,100,0.7)';
+          ctx.fillText('RANDOM', slotCx, slotRect.y + slotRect.h + 6);
+        }
+
+        // Difficulty label below race label
+        ctx.font = `bold ${Math.max(9, fontSize * 0.8)}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        ctx.fillStyle = diffColor;
+        ctx.fillText(`BOT ${diffLabel}`, slotCx, slotRect.y + slotRect.h + 6 + fontSize * 1.3);
+
+        ctx.font = `${Math.max(6, fontSize * 0.5)}px monospace`;
+        ctx.fillStyle = 'rgba(255,255,255,0.3)';
+        ctx.fillText('click: diff / race', slotCx, slotRect.y + slotRect.h + 6 + fontSize * 2.5);
+      } else {
+        // Empty slot
+        const slotCx = pl.panel.x + colW * i + colW / 2;
+        const slotY = pl.panel.y + pl.panel.h * 0.38;
+        ctx.font = `bold ${Math.max(8, fontSize * 0.8)}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = 'rgba(255,255,255,0.2)';
+        ctx.fillText('EMPTY', slotCx, slotY);
+        ctx.font = `${Math.max(7, fontSize * 0.55)}px monospace`;
+        ctx.fillStyle = 'rgba(255,255,255,0.3)';
+        ctx.fillText('click to add bot', slotCx, slotY + fontSize * 1.3);
+      }
+
+      if (this.isDragging && this.dragSlot === i) ctx.globalAlpha = 1;
+
+      // Divider lines within same team
+      if (i > 0 && i % playersPerTeam !== 0) {
+        ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(pl.panel.x + colW * i, slotAreaTop + 14);
+        ctx.lineTo(pl.panel.x + colW * i, slotAreaBot - 4);
+        ctx.stroke();
+      }
+    }
+
+    // Drag ghost
+    if (this.isDragging && this.dragSlot >= 0) {
+      ctx.globalAlpha = 0.7;
+      const ghostSize = 40;
+      if (this.dragSlot === ls.playerSlot) {
+        const dragRace = ls.playerRace === 'random' ? Race.Crown : ls.playerRace;
+        const spriteData = this.sprites.getUnitSprite(dragRace, 'melee', this.dragSlot < playersPerTeam ? 0 : 1);
+        if (spriteData) {
+          const [img, def] = spriteData;
+          const frame = Math.floor(this.animTime * 5) % def.cols;
+          const gY = def.groundY ?? 0.71;
+          drawSpriteFrame(ctx, img, def, frame, this.dragX - ghostSize / 2, this.dragY - ghostSize * gY, ghostSize, ghostSize);
+        }
+        ctx.font = `bold ${Math.max(8, fontSize * 0.7)}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#fff';
+        ctx.fillText(this.playerName, this.dragX, this.dragY + ghostSize * 0.4);
+      } else {
+        const diff = ls.bots[String(this.dragSlot)];
+        if (diff) {
+          const diffOpt = PARTY_DIFFICULTY_OPTIONS.find(d => d.level === diff);
+          ctx.font = `bold ${Math.max(12, fontSize * 1.2)}px monospace`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillStyle = diffOpt?.color ?? '#aaa';
+          ctx.fillText('BOT', this.dragX, this.dragY);
+        }
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    // START button
+    const canStart = canStartLocalSetup(ls);
+    ctx.globalAlpha = canStart ? 1 : 0.4;
+    this.ui.drawSword(ctx, pl.start.x, pl.start.y, pl.start.w, pl.start.h, canStart ? 0 : 4);
+    const startFontSize = Math.max(10, Math.min(pl.start.h * 0.35, 16));
+    ctx.font = `bold ${startFontSize}px monospace`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#fff';
+    ctx.fillText('START', pl.start.x + pl.start.w * 0.52, pl.start.y + pl.start.h * 0.5);
+    ctx.globalAlpha = 1;
+
+    // BACK button
+    this.ui.drawSword(ctx, pl.leave.x, pl.leave.y, pl.leave.w, pl.leave.h, 1);
+    const leaveFontSize = Math.max(9, Math.min(pl.leave.h * 0.32, 14));
+    ctx.font = `bold ${leaveFontSize}px monospace`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#fff';
+    ctx.fillText('BACK', pl.leave.x + pl.leave.w * 0.52, pl.leave.y + pl.leave.h * 0.5);
+
+    // Start validation hint
+    if (!canStart) {
+      ctx.font = `${Math.max(8, fontSize * 0.6)}px monospace`;
+      ctx.textAlign = 'center';
+      ctx.fillStyle = 'rgba(255,100,100,0.7)';
+      ctx.fillText('Each team needs at least 1 player or bot', w / 2, pl.start.y - 8);
+    }
+  }
+
+  // ─── Render: Party panel (Firebase) ───
 
   private renderPartyPanel(ctx: CanvasRenderingContext2D, w: number, _h: number): void {
     const pl = this.getPartyLayout();
@@ -2101,26 +2717,41 @@ export class TitleScene implements Scene {
   ): void {
     const cx = x + slotW / 2;
     const fontSize = Math.max(10, Math.min(slotW / 10, 14));
+    const isRandom = (player.race as string) === 'random';
 
-    // Race icon — use slot index for sprite color variant (team 0 = pid 0, team 1 = pid 1+)
-    const spriteData = this.sprites.getUnitSprite(player.race, 'melee', slotIndex);
-    if (spriteData) {
-      const [img, def] = spriteData;
-      const iconSize = raceRect.w;
-      const frame = Math.floor(this.animTime * 5) % def.cols;
-      const gY = def.groundY ?? 0.71;
-      const drawY = raceRect.y + raceRect.h - iconSize * gY;
-      drawSpriteFrame(ctx, img, def, frame, raceRect.x, drawY, iconSize, iconSize);
+    if (isRandom) {
+      // Random race — show ? icon
+      ctx.font = `bold ${Math.max(18, fontSize * 2.2)}px monospace`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = 'rgba(255,220,100,0.8)';
+      ctx.fillText('?', cx, raceRect.y + raceRect.h * 0.5);
+    } else {
+      // Race icon — use slot index for sprite color variant (team 0 = pid 0, team 1 = pid 1+)
+      const spriteData = this.sprites.getUnitSprite(player.race, 'melee', slotIndex);
+      if (spriteData) {
+        const [img, def] = spriteData;
+        const iconSize = Math.min(raceRect.w, raceRect.h);
+        const frame = Math.floor(this.animTime * 5) % def.cols;
+        const gY = def.groundY ?? 0.71;
+        const drawY = raceRect.y + raceRect.h - iconSize * gY;
+        drawSpriteFrame(ctx, img, def, frame, cx - iconSize / 2, drawY, iconSize, iconSize);
+      }
     }
 
     // Race label below icon
     const labelY = raceRect.y + raceRect.h + 6;
-    const colors = RACE_COLORS[player.race];
     ctx.font = `bold ${fontSize}px monospace`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
-    ctx.fillStyle = colors.primary;
-    ctx.fillText(RACE_LABELS[player.race], cx, labelY);
+    if (isRandom) {
+      ctx.fillStyle = 'rgba(255,220,100,0.9)';
+      ctx.fillText('RANDOM', cx, labelY);
+    } else {
+      const colors = RACE_COLORS[player.race];
+      ctx.fillStyle = colors.primary;
+      ctx.fillText(RACE_LABELS[player.race], cx, labelY);
+    }
 
     // Player name
     ctx.font = `${Math.max(9, fontSize * 0.85)}px monospace`;

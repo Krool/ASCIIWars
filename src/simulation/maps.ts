@@ -119,6 +119,13 @@ export const DUEL_MAP: MapDef = {
   towerAlleyCols: SHARED_ALLEY_COLS,  // 20
   towerAlleyRows: SHARED_ALLEY_ROWS,  // 12
 
+  // Nuke zone: each team can only nuke the 40% of the map nearest their base
+  // Bottom (team 0) base at y≈110, Top (team 1) base at y≈10
+  nukeZone: [
+    { min: Math.round(MAP_HEIGHT * 0.60), max: MAP_HEIGHT },  // Bottom: y >= 72
+    { min: 0, max: Math.round(MAP_HEIGHT * 0.40) },           // Top: y <= 48
+  ],
+
   resourceNodes: [
     { type: ResourceType.Wood, x: WOOD_NODE_X, y: 60 },
     { type: ResourceType.Stone, x: STONE_NODE_X, y: 60 },
@@ -298,6 +305,13 @@ export const SKIRMISH_MAP: MapDef = {
   hutGridRows: SK_HUT_ROWS,       // 10
   towerAlleyCols: SK_ALLEY_COLS,  // 12
   towerAlleyRows: SK_ALLEY_ROWS,  // 20
+
+  // Nuke zone: each team can only nuke the 40% of the map nearest their base
+  // Left (team 0) base at x≈14, Right (team 1) base at x≈146
+  nukeZone: [
+    { min: 0, max: Math.round(SK_W * 0.40) },                 // Left: x <= 64
+    { min: Math.round(SK_W * 0.60), max: SK_W },              // Right: x >= 96
+  ],
 
   resourceNodes: [
     { type: ResourceType.Wood, x: SK_DIAMOND_X, y: 6 },

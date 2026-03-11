@@ -718,4 +718,23 @@ export class SoundManager {
     if (this.musicMode !== 'battle') return;
     this.targetIntensity = Math.max(0, Math.min(2, Math.floor(level)));
   }
+
+  /** Non-spatial achievement fanfare — bright ascending arpeggio with shimmer */
+  playAchievement(): void {
+    const d = this.dest();
+    const v = 0.4 * this.settings.sfxVolume;
+    // Ascending major arpeggio: C5 E5 G5 C6 — triumphant
+    const arp = [523, 659, 784, 1047];
+    arp.forEach((f, i) => {
+      this.note(f, 0.2, v * 0.55, d, 'square', i * 0.1);
+      // Shimmer: octave-up triangle layer
+      this.note(f * 2, 0.15, v * 0.2, d, 'triangle', i * 0.1 + 0.02);
+    });
+    // Final sustained chord
+    this.note(1047, 0.6, v * 0.5, d, 'triangle', 0.42);
+    this.note(1319, 0.5, v * 0.3, d, 'triangle', 0.44);
+    this.note(1568, 0.45, v * 0.2, d, 'sine', 0.46);
+    // Sparkle sweep
+    this.sweep(2000, 4000, 0.3, v * 0.1, d, 'sine', 0.35);
+  }
 }

@@ -11,10 +11,12 @@ import { CommandSync, TICKS_PER_TURN } from '../network/CommandSync';
 
 export interface GamePartyOptions {
   /** All human players in slot order: { slotIndex, race }.
-   *  Slots not listed here become bots. */
+   *  Slots not listed here become bots (if in slotBots) or empty. */
   humanPlayers: { slot: number; race: Race }[];
-  /** Per-slot bot difficulty overrides. Slot → BotDifficultyLevel. */
+  /** Per-slot bot difficulty overrides. Slot → BotDifficultyLevel. Only listed slots spawn bots. */
   slotBots?: { [slot: string]: string };
+  /** Per-slot bot race. Slot → Race string. Missing = random. */
+  slotBotRaces?: { [slot: string]: string };
   localPlayerId: number;     // this client's slot index
   seed: number;
   partyCode?: string;        // set for networked multiplayer (enables CommandSync)
@@ -30,6 +32,7 @@ export class Game {
   private input: InputHandler;
   private sounds: SoundManager;
   onMatchEnd: (() => void) | null = null;
+  onQuitGame: (() => void) | null = null;
   private matchEndTick = 0;
 
   private botCtx!: BotContext;
@@ -62,22 +65,43 @@ export class Game {
 
     if (partyOpts) {
       // Party mode: build player list from human slots + bot fillers
+      // Only slots in humanPlayers or slotBots are occupied; others are empty (inactive).
       const shuffleRng = createSeededRng(partyOpts.seed);
       const humanSlotMap = new Map(partyOpts.humanPlayers.map(h => [h.slot, h.race]));
-      const usedRaces = new Set(partyOpts.humanPlayers.map(h => h.race));
+      const botSlots = partyOpts.slotBots ?? {};
+      const botRaceChoices = partyOpts.slotBotRaces ?? {};
+
+      // Collect all pre-chosen races (human + bots with specific race) to avoid duplicates
+      const usedRaces = new Set<Race>(partyOpts.humanPlayers.map(h => h.race));
+      for (const [slot, raceStr] of Object.entries(botRaceChoices)) {
+        if (botSlots[slot] && raceStr !== 'random' && allRaces.includes(raceStr as Race)) {
+          usedRaces.add(raceStr as Race);
+        }
+      }
+
+      // Shuffle remaining races for random assignment
       const otherRaces = allRaces.filter(r => !usedRaces.has(r));
       for (let i = otherRaces.length - 1; i > 0; i--) {
         const j = Math.floor(shuffleRng() * (i + 1));
         [otherRaces[i], otherRaces[j]] = [otherRaces[j], otherRaces[i]];
       }
       let botIdx = 0;
-      const players: { race: Race; isBot: boolean }[] = [];
+      const players: { race: Race; isBot: boolean; isEmpty: boolean }[] = [];
       for (let i = 0; i < mapDef.maxPlayers; i++) {
         const humanRace = humanSlotMap.get(i);
         if (humanRace !== undefined) {
-          players.push({ race: humanRace, isBot: false });
+          players.push({ race: humanRace, isBot: false, isEmpty: false });
+        } else if (botSlots[String(i)]) {
+          // Bot with chosen or random race
+          const chosenRace = botRaceChoices[String(i)];
+          if (chosenRace && chosenRace !== 'random' && allRaces.includes(chosenRace as Race)) {
+            players.push({ race: chosenRace as Race, isBot: true, isEmpty: false });
+          } else {
+            players.push({ race: otherRaces[botIdx++ % otherRaces.length], isBot: true, isEmpty: false });
+          }
         } else {
-          players.push({ race: otherRaces[botIdx++ % otherRaces.length], isBot: true });
+          // Empty slot — no buildings, no income, no AI
+          players.push({ race: otherRaces[botIdx++ % otherRaces.length], isBot: false, isEmpty: true });
         }
       }
       this.state = createInitialState(players, partyOpts.seed, mapDef);
@@ -88,12 +112,12 @@ export class Game {
         const j = Math.floor(Math.random() * (i + 1));
         [otherRaces[i], otherRaces[j]] = [otherRaces[j], otherRaces[i]];
       }
-      const players: { race: Race; isBot: boolean }[] = [
-        { race: playerRace, isBot: false },  // P0 - human
+      const players: { race: Race; isBot: boolean; isEmpty: boolean }[] = [
+        { race: playerRace, isBot: false, isEmpty: false },  // P0 - human
       ];
       // Fill remaining slots with bots
       for (let i = 1; i < mapDef.maxPlayers; i++) {
-        players.push({ race: otherRaces[i - 1], isBot: true });
+        players.push({ race: otherRaces[i - 1], isBot: true, isEmpty: false });
       }
       this.state = createInitialState(players, undefined, mapDef);
     }
@@ -107,10 +131,14 @@ export class Game {
       }
     }
 
-    // Set up multiplayer command sync if party code provided
-    if (partyOpts?.partyCode != null) {
-      this.isMultiplayer = true;
+    // Set local player ID for party mode (even local games)
+    if (partyOpts) {
       this.localPlayerId = partyOpts.localPlayerId;
+    }
+
+    // Set up multiplayer command sync if party code provided (non-empty)
+    if (partyOpts?.partyCode) {
+      this.isMultiplayer = true;
       const humanSlotIds = partyOpts.humanPlayers.map(h => h.slot);
       this.commandSync = new CommandSync(partyOpts.partyCode, this.localPlayerId, humanSlotIds);
       this.commandSync.onDesync = (turn, local, remote) => {
@@ -121,7 +149,11 @@ export class Game {
         this.peerDisconnected = true;
         console.warn('[Game] Peer disconnected');
       };
+      this.commandSync.onPlayerLeft = (slotId: number) => {
+        this.convertPlayerToBot(slotId);
+      };
       this.commandSync.start();
+      this.commandSync.listenForLeaves();
     }
 
     this.renderer = new Renderer(canvas, ui);
@@ -130,6 +162,7 @@ export class Game {
     this.renderer.camera.worldTilesW = mapDef.width;
     this.renderer.camera.worldTilesH = mapDef.height;
     this.input = new InputHandler(this, canvas, this.renderer.camera, ui, this.renderer.sprites);
+    this.input.onQuitGame = () => this.handleQuitGame();
     this.sounds = new SoundManager();
 
     this.loop = new GameLoop(
@@ -175,6 +208,25 @@ export class Game {
       this.commandSync.stop();
       this.commandSync = null;
     }
+  }
+
+  private handleQuitGame(): void {
+    if (this.isMultiplayer && this.commandSync) {
+      // Broadcast leave so remaining players can replace us with a bot
+      this.commandSync.broadcastLeave();
+    }
+    this.onQuitGame?.();
+  }
+
+  /** Convert a human player slot to a Nightmare-difficulty bot mid-game. */
+  private convertPlayerToBot(slotId: number): void {
+    const player = this.state.players[slotId];
+    if (!player || player.isBot) return;
+    player.isBot = true;
+    // Set Nightmare difficulty for the replacement bot
+    const preset = BOT_DIFFICULTY_PRESETS[BotDifficultyLevel.Nightmare];
+    if (preset) this.botCtx.difficulty[slotId] = preset;
+    console.log(`[Game] Player ${slotId} left — replaced with Nightmare bot`);
   }
 
   sendCommand(cmd: GameCommand): void {

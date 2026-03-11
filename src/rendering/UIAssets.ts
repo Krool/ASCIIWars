@@ -230,11 +230,33 @@ export class UIAssets {
   }
 
   // Swords: 448x640, 5 rows of 128px
-  drawSword(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, color: SwordColor = 0): boolean {
+  // reveal: 0→1 slides the sword from the left edge to its final x position.
+  // Returns the x offset applied (0 when fully revealed), so callers can shift labels to match.
+  drawSword(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, color: SwordColor = 0, reveal = 1): number {
     const img = this.loadImage(swordsPng);
-    if (!img) return false;
-    this.drawThreePartH(ctx, img, STRIP_448, color * 128, 128, x, y, w, h);
-    return true;
+    if (!img) return 0;
+    if (reveal <= 0) return -(x + w);
+    if (reveal >= 1) {
+      this.drawThreePartH(ctx, img, STRIP_448, color * 128, 128, x, y, w, h);
+      return 0;
+    }
+    // Ease-out quart for snappy deceleration with a satisfying stop
+    const t = 1 - Math.pow(1 - reveal, 4);
+    // Slide from off-screen left (-w) to final position (x)
+    const drawX = -w + (x + w) * t;
+    const offsetX = drawX - x;
+    // Fade in quickly during the first half of the slide
+    const prevAlpha = ctx.globalAlpha;
+    ctx.globalAlpha = prevAlpha * Math.min(1, reveal / 0.6);
+    this.drawThreePartH(ctx, img, STRIP_448, color * 128, 128, drawX, y, w, h);
+    ctx.globalAlpha = prevAlpha;
+    return offsetX;
+  }
+
+  /** Compute staggered reveal progress for button at `index`. */
+  static swordReveal(elapsedMs: number, index: number, durationMs = 250, staggerMs = 60): number {
+    const delay = index * staggerMs;
+    return Math.max(0, Math.min(1, (elapsedMs - delay) / durationMs));
   }
 
   // =================================================================

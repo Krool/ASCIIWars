@@ -264,14 +264,19 @@ export class PostMatchScene implements Scene {
 
     // Continue button - Sword
     const btn = this.getButtonRect();
-    this.ui.drawSword(ctx, btn.x, btn.y, btn.w, btn.h, 0);
-    ctx.font = `bold ${Math.max(20, fontSize)}px monospace`;
-    ctx.textAlign = 'center';
-    const btnTextX = btn.x + btn.w * 0.52;
-    ctx.fillStyle = 'rgba(0,0,0,0.5)';
-    ctx.fillText('CONTINUE', btnTextX + 1, btn.y + btn.h * 0.58 + 1);
-    ctx.fillStyle = '#fff';
-    ctx.fillText('CONTINUE', btnTextX, btn.y + btn.h * 0.58);
+    const rv = UIAssets.swordReveal(this.animTime, 0);
+    const ox = this.ui.drawSword(ctx, btn.x, btn.y, btn.w, btn.h, 0, rv);
+    if (rv > 0) {
+      ctx.font = `bold ${Math.max(20, fontSize)}px monospace`;
+      ctx.textAlign = 'center';
+      ctx.globalAlpha = rv;
+      const btnTextX = btn.x + btn.w * 0.52 + ox;
+      ctx.fillStyle = 'rgba(0,0,0,0.5)';
+      ctx.fillText('CONTINUE', btnTextX + 1, btn.y + btn.h * 0.58 + 1);
+      ctx.fillStyle = '#fff';
+      ctx.fillText('CONTINUE', btnTextX, btn.y + btn.h * 0.58);
+      ctx.globalAlpha = 1;
+    }
   }
 
   private drawWarHero(ctx: CanvasRenderingContext2D, state: GameState, w: number, y: number, fontSize: number): void {

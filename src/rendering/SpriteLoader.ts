@@ -562,11 +562,11 @@ const UPGRADE_MOVE_SPRITES: Record<string, SpriteDef> = {
   [upgradeKey(Race.Oozlings, 'caster', 'G')]: { ...cmStrip(oozCasterPurple, 30 * 6, 40, 6, 0.93), scale: 0.8 },
   // --- Wild melee: Spider → Bear (B) / Spider Brood (C) branches ---
   [upgradeKey(Race.Wild, 'melee', 'B')]: tsSheet(bearRun, 1280, 256, 0.69),
-  // C = Spider Brood (no override, uses base spider)
+  [upgradeKey(Race.Wild, 'melee', 'C')]: { ...tsSheet(wildMelee, 1536, 192, 0.71), scale: 0.4 }, // Spider Brood (3 small spiders)
   [upgradeKey(Race.Wild, 'melee', 'D')]: { ...tsSheet(minotaurWalk, 2560, 320, 0.67), scale: 1.5 },
   [upgradeKey(Race.Wild, 'melee', 'E')]: { ...tsSheet(bearRun, 1280, 256, 0.69), scale: 1.3 },
-  [upgradeKey(Race.Wild, 'melee', 'F')]: tsSheet(snakeRun, 1536, 192, 0.64),
-  // G = Spider Swarm (no override, uses base spider)
+  [upgradeKey(Race.Wild, 'melee', 'F')]: { ...tsSheet(snakeRun, 1536, 192, 0.64), scale: 0.4 }, // Viper Nest (3 small snakes)
+  [upgradeKey(Race.Wild, 'melee', 'G')]: { ...tsSheet(wildMelee, 1536, 192, 0.71), scale: 0.3 }, // Spider Swarm (5 tiny spiders)
   // --- Deep melee: Turtle → Frog branch (C=FrogMonster, F/G=FrogBoss) ---
   [upgradeKey(Race.Deep, 'melee', 'C')]: cmStrip(frogMonsterMove, 1056, 48, 22),
   [upgradeKey(Race.Deep, 'melee', 'F')]: cmStrip(frogBossMove, 2552, 97, 22),
@@ -576,9 +576,9 @@ const UPGRADE_MOVE_SPRITES: Record<string, SpriteDef> = {
   [upgradeKey(Race.Tenders, 'caster', 'F')]: cmStrip(mushroomMove, 800, 31, 20),
   [upgradeKey(Race.Tenders, 'caster', 'G')]: cmStrip(mushroomMove, 800, 31, 20),
   // --- Geists caster: Sorcerer LVL1 → LVL2/3/4 branch (C/F/G) ---
-  [upgradeKey(Race.Geists, 'caster', 'C')]: cmStrip(sorcererL2Move, 456, 28, 12, 0.69),
-  [upgradeKey(Race.Geists, 'caster', 'F')]: cmStrip(sorcererL3Move, 624, 44, 12, 0.69),
-  [upgradeKey(Race.Geists, 'caster', 'G')]: cmStrip(sorcererL4Move, 1488, 59, 24, 0.69),
+  [upgradeKey(Race.Geists, 'caster', 'C')]: cmStrip(sorcererL2Move, 456, 28, 12, 1.0),
+  [upgradeKey(Race.Geists, 'caster', 'F')]: cmStrip(sorcererL3Move, 624, 44, 12, 1.0),
+  [upgradeKey(Race.Geists, 'caster', 'G')]: cmStrip(sorcererL4Move, 1488, 59, 24, 1.0),
   // --- Tenders melee: Ent LVL1 → LVL2/3/4 branch (B/D/E) ---
   [upgradeKey(Race.Tenders, 'melee', 'B')]: cmStrip(entL2Move, 828, 45, 12, 0.94),
   [upgradeKey(Race.Tenders, 'melee', 'D')]: cmStrip(entL3Move, 1548, 56, 18, 0.94),
@@ -619,11 +619,11 @@ const UPGRADE_ATK_SPRITES: Record<string, SpriteDef> = {
   [upgradeKey(Race.Horde, 'caster', 'G')]: { ...cmStrip(hordeCasterAtkRed, 380, 26, 10), scale: 0.495 },
   // --- Wild melee: Bear (B/E) / Minotaur (D) / Snake (F) attacks ---
   [upgradeKey(Race.Wild, 'melee', 'B')]: tsSheet(bearAttack, 2304, 256, 0.69),
-  // C = Spider Brood (no override, uses base spider attack)
+  [upgradeKey(Race.Wild, 'melee', 'C')]: { ...tsSheet(wildMeleeAtk, 1152, 192, 0.71), scale: 0.4 }, // Spider Brood attack
   [upgradeKey(Race.Wild, 'melee', 'D')]: { ...tsSheet(minotaurAttack, 3840, 320, 0.67), scale: 1.5 },
   [upgradeKey(Race.Wild, 'melee', 'E')]: { ...tsSheet(bearAttack, 2304, 256, 0.69), scale: 1.3 },
-  [upgradeKey(Race.Wild, 'melee', 'F')]: tsSheet(snakeAttack, 1152, 192, 0.64),
-  // G = Spider Swarm (no override, uses base spider attack)
+  [upgradeKey(Race.Wild, 'melee', 'F')]: { ...tsSheet(snakeAttack, 1152, 192, 0.64), scale: 0.4 }, // Viper Nest attack
+  [upgradeKey(Race.Wild, 'melee', 'G')]: { ...tsSheet(wildMeleeAtk, 1152, 192, 0.71), scale: 0.3 }, // Spider Swarm attack
   // --- Wild ranged: Snake attack sprites (C/F/G) ---
   [upgradeKey(Race.Wild, 'ranged', 'C')]: tsSheet(snakeAttack, 1152, 192, 0.64),
   [upgradeKey(Race.Wild, 'ranged', 'F')]: tsSheet(snakeAttack, 1152, 192, 0.64),
@@ -637,9 +637,9 @@ const UPGRADE_ATK_SPRITES: Record<string, SpriteDef> = {
   [upgradeKey(Race.Tenders, 'caster', 'F')]: cmStrip(mushroomAtk, 714, 40, 14),
   [upgradeKey(Race.Tenders, 'caster', 'G')]: cmStrip(mushroomAtk, 714, 40, 14),
   // --- Geists caster: Sorcerer dash attacks ---
-  [upgradeKey(Race.Geists, 'caster', 'C')]: cmStrip(sorcererL2Atk, 380, 28, 10, 0.69),
-  [upgradeKey(Race.Geists, 'caster', 'F')]: cmStrip(sorcererL3Atk, 832, 44, 16, 0.69),
-  [upgradeKey(Race.Geists, 'caster', 'G')]: cmStrip(sorcererL4Atk, 620, 59, 10, 0.69),
+  [upgradeKey(Race.Geists, 'caster', 'C')]: cmStrip(sorcererL2Atk, 380, 28, 10, 1.0),
+  [upgradeKey(Race.Geists, 'caster', 'F')]: cmStrip(sorcererL3Atk, 832, 44, 16, 1.0),
+  [upgradeKey(Race.Geists, 'caster', 'G')]: cmStrip(sorcererL4Atk, 620, 59, 10, 0.98),
   // --- Tenders melee: Ent dash attacks ---
   [upgradeKey(Race.Tenders, 'melee', 'B')]: cmStrip(entL2Atk, 690, 45, 10, 0.94),
   [upgradeKey(Race.Tenders, 'melee', 'D')]: cmStrip(entL3Atk, 688, 56, 8, 0.94),
@@ -720,9 +720,9 @@ export const RESOURCE_SPRITES = {
   goldStone2: singleFrame(goldStone2, 128, 128),
   goldStone3: singleFrame(goldStone3, 128, 128),
   woodResource: singleFrame(woodResource, 64, 64),
-  tree: tsSheet(tree1, 1536, 256),
-  tree2: tsSheet(tree2, 1536, 256),
-  tree3: tsSheet(tree3, 1536, 192),
+  tree: { url: tree1, frameW: 192, frameH: 256, cols: 8, groundY: 0.71 },
+  tree2: { url: tree2, frameW: 192, frameH: 256, cols: 8, groundY: 0.71 },
+  tree3: { url: tree3, frameW: 192, frameH: 192, cols: 8, groundY: 0.71 },
   sheep: tsSheet(sheepIdle, 768, 128),
   sheepGrass: tsSheet(sheepGrass, 1536, 128),
   meatResource: singleFrame(meatResource, 64, 64),

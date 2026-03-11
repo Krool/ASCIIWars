@@ -22,9 +22,9 @@ import {
 function genId(state: GameState): number { return state.nextEntityId++; }
 const SELL_COOLDOWN_TICKS = 5 * TICK_RATE;
 const WOOD_CARRY_PER_TRIP = 10;
-const WOOD_DROP_BATCHES = 4;
+const WOOD_DROP_BATCHES = 1;
 const WOOD_PICKUP_RADIUS = 2.35;
-const WOOD_PILE_SPREAD_RADIUS = 3.4;
+const WOOD_PILE_SPREAD_RADIUS = 2.0;
 
 // Passive income per second per race: +1 of primary resource, +0.1 of secondary
 const PASSIVE_INCOME: Record<Race, { gold: number; wood: number; stone: number }> = {
@@ -253,7 +253,7 @@ function addCombatEvent(state: GameState, evt: CombatEvent): void {
 // === State Creation ===
 
 export function createInitialState(
-  players: { race: Race; isBot: boolean }[],
+  players: { race: Race; isBot: boolean; isEmpty?: boolean }[],
   seed?: number,
   mapDef?: MapDef,
 ): GameState {
@@ -264,12 +264,13 @@ export function createInitialState(
     id: i,
     team: (map.playerSlots[i]?.teamIndex ?? (i < 2 ? 0 : 1)) as Team,
     race: p.race,
-    gold: INITIAL_RESOURCES[p.race].gold,
-    wood: INITIAL_RESOURCES[p.race].wood,
-    stone: INITIAL_RESOURCES[p.race].stone,
-    nukeAvailable: true,
-    connected: true,
+    gold: p.isEmpty ? 0 : INITIAL_RESOURCES[p.race].gold,
+    wood: p.isEmpty ? 0 : INITIAL_RESOURCES[p.race].wood,
+    stone: p.isEmpty ? 0 : INITIAL_RESOURCES[p.race].stone,
+    nukeAvailable: !p.isEmpty,
+    connected: !p.isEmpty,
     isBot: p.isBot,
+    isEmpty: !!p.isEmpty,
     hasBuiltTower: false,
   }));
 
@@ -315,9 +316,10 @@ export function createInitialState(
     fallenHeroes: [],
   };
 
-  // Give each player a free starter hut + harvester
+  // Give each player a free starter hut + harvester (skip empty slots)
   for (let i = 0; i < playerStates.length; i++) {
     const p = playerStates[i];
+    if (p.isEmpty) continue;
     const origin = getHutGridOrigin(i, map);
     const totalSlots = map.hutGridCols * map.hutGridRows;
     const centerSlot = Math.floor(totalSlots / 2);
@@ -538,6 +540,7 @@ export function simulateTick(state: GameState, commands: GameCommand[]): void {
   // Primary = most-used resource in building costs; secondary = other needed resource
   if (state.tick % TICK_RATE === 0) {
     for (const p of state.players) {
+      if (p.isEmpty) continue;
       const inc = PASSIVE_INCOME[p.race];
       const ps = state.playerStats[p.id];
       if (inc.gold >= 1) { p.gold += Math.floor(inc.gold); if (ps) ps.totalGoldEarned += Math.floor(inc.gold); }
@@ -571,7 +574,6 @@ export function simulateTick(state: GameState, commands: GameCommand[]): void {
   tickProjectiles(state);
   tickStatusEffects(state);
   tickNukeTelegraphs(state);
-  for (const pile of state.woodPiles) pile.age++;
   tickHarvesters(state, diamondCellMap);
   tickEffects(state);
   checkWinConditions(state);
@@ -824,10 +826,11 @@ function fireNuke(state: GameState, cmd: Extract<GameCommand, { type: 'fire_nuke
   const player = state.players[cmd.playerId];
   if (!player.nukeAvailable) return;
 
-  // Nukes can only land on your own half + mid zone (not enemy base/territory)
+  // Nukes can only land within your team's allowed nuke zone (own 40% of map)
   const team = player.team;
-  if (team === Team.Bottom && cmd.y < ZONES.MID.start) return;
-  if (team === Team.Top && cmd.y > ZONES.MID.end) return;
+  const nukeZone = state.mapDef.nukeZone[team];
+  const nukeAxis = state.mapDef.shapeAxis === 'x' ? cmd.x : cmd.y;
+  if (nukeAxis < nukeZone.min || nukeAxis > nukeZone.max) return;
 
   player.nukeAvailable = false;
 
@@ -889,7 +892,6 @@ function dropWoodPile(state: GameState, x: number, y: number, amount: number, an
     x: x + Math.cos(angle) * ring,
     y: y + Math.sin(angle) * ring * 0.65,
     amount,
-    age: 0,
   };
   clampToArenaBounds(pile, 0.35, state.mapDef);
   state.woodPiles.push(pile);
@@ -900,7 +902,7 @@ function collectWoodPiles(state: GameState, x: number, y: number, desiredAmount:
   const nearby = state.woodPiles
     .map((pile, index) => ({ pile, index, dist: Math.hypot(pile.x - x, pile.y - y) }))
     .filter(entry => entry.dist <= WOOD_PICKUP_RADIUS)
-    .sort((a, b) => a.dist - b.dist);
+    .sort((a, b) => a.dist - b.dist || a.pile.id - b.pile.id);
 
   let gathered = 0;
   const remove = new Set();
@@ -960,7 +962,7 @@ function tickSpawners(state: GameState): void {
       const category: UnitState['category'] =
         building.type === BuildingType.CasterSpawner ? 'caster' :
         building.type === BuildingType.RangedSpawner ? 'ranged' : 'melee';
-      const count = stats.spawnCount ?? 1;
+      const count = upgrade.special.spawnCount ?? stats.spawnCount ?? 1;
       for (let si = 0; si < count; si++) {
         state.units.push({
           id: genId(state), type: stats.name, playerId: building.playerId, team: player.team,
@@ -1019,8 +1021,8 @@ function tickUnitMovement(state: GameState): void {
     const path = getLanePath(unit.team, unit.lane, state.mapDef);
     const pathLen = getCachedPathLength(unit.team, unit.lane, state.mapDef);
 
-    // Ranged units prefer to stay ~3 tiles behind nearest allied melee
-    if (unit.category === 'ranged') {
+    // Ranged + caster units prefer to stay behind nearest allied melee
+    if (unit.category === 'ranged' || unit.category === 'caster') {
       let nearestMeleeProgress = -1;
       let nearestMeleeDist = Infinity;
       for (const other of state.units) {
@@ -1030,7 +1032,9 @@ function tickUnitMovement(state: GameState): void {
         if (d < nearestMeleeDist) { nearestMeleeDist = d; nearestMeleeProgress = other.pathProgress; }
       }
       if (nearestMeleeProgress >= 0) {
-        const behindOffset = 3 / pathLen; // ~3 tiles behind
+        // Casters hang further back than ranged (they have AoE, don't need to be close)
+        const behind = unit.category === 'caster' ? 4.5 : 3;
+        const behindOffset = behind / pathLen;
         const idealProgress = nearestMeleeProgress - behindOffset;
         if (unit.pathProgress > idealProgress + 0.005) {
           // Too far forward — slow down significantly
@@ -1066,16 +1070,18 @@ function tickUnitMovement(state: GameState): void {
     let sep = 0;
     let sepCount = 0;
     for (const other of state.units) {
-      if (other.id === unit.id || other.team !== unit.team || other.lane !== unit.lane) continue;
+      if (other.id === unit.id || other.lane !== unit.lane) continue;
       const ox = other.x - pos.x;
       const oy = other.y - pos.y;
       const d = Math.sqrt(ox * ox + oy * oy);
-      if (d <= 0.001 || d > 1.8) continue;
-      const w = (1.8 - d) / 1.8;
-      sep -= (ox / d) * w;
+      if (d <= 0.001 || d > 2.2) continue;
+      const w = (2.2 - d) / 2.2;
+      // Enemies push laterally too, so marching units spread before contact
+      const teamMul = other.team === unit.team ? 1.0 : 0.5;
+      sep -= (ox / d) * w * teamMul;
       sepCount++;
     }
-    const separationOffset = sepCount > 0 ? Math.max(-0.45, Math.min(0.45, sep * 0.12)) : 0;
+    const separationOffset = sepCount > 0 ? Math.max(-0.7, Math.min(0.7, sep * 0.18)) : 0;
     const laneOffset = (baseOffset + jitter + separationOffset) * chokeSpread;
     const tx = posAhead.x - pos.x;
     const ty = posAhead.y - pos.y;
@@ -1422,6 +1428,8 @@ function applyOnHitEffects(state: GameState, attacker: UnitState, target: UnitSt
 
 const COLLISION_BUILDING_RADIUS = 0.8;
 const COLLISION_GOLD_CELL_RADIUS = 0.58;
+const UNIT_COLLISION_RADIUS = 0.45; // hard collision circle per unit
+const UNIT_COLLISION_PUSH_STRENGTH = 0.5; // how aggressively units push apart (0-1)
 
 function pushOutFromPoint(unit: UnitState, cx: number, cy: number, radius: number): void {
   const dx = unit.x - cx;
@@ -1615,7 +1623,63 @@ function moveWithSlide(pos: { x: number; y: number }, tx: number, ty: number, st
 
 
 function tickUnitCollision(state: GameState): void {
-  for (const unit of state.units) {
+  const units = state.units;
+  const minSep = UNIT_COLLISION_RADIUS * 2; // two radii = minimum distance between centers
+
+  // Unit-vs-unit hard collision — creates battle lines.
+  // Spatial grid to avoid O(n^2) — bucket units into 2-tile cells.
+  const cellSize = 2;
+  const grid = new Map<number, UnitState[]>();
+  for (const u of units) {
+    if (u.hp <= 0) continue;
+    const key = (Math.floor(u.x / cellSize) * 10000) + Math.floor(u.y / cellSize);
+    const bucket = grid.get(key);
+    if (bucket) bucket.push(u); else grid.set(key, [u]);
+  }
+
+  for (const u of units) {
+    if (u.hp <= 0) continue;
+    const cx = Math.floor(u.x / cellSize);
+    const cy = Math.floor(u.y / cellSize);
+    // Check 3x3 neighborhood
+    for (let gx = cx - 1; gx <= cx + 1; gx++) {
+      for (let gy = cy - 1; gy <= cy + 1; gy++) {
+        const bucket = grid.get(gx * 10000 + gy);
+        if (!bucket) continue;
+        for (const o of bucket) {
+          if (o.id <= u.id || o.hp <= 0) continue; // process each pair once
+          let dx = o.x - u.x;
+          let dy = o.y - u.y;
+          let dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist >= minSep) continue;
+
+          // Exact overlap — push apart in deterministic direction based on IDs
+          if (dist < 0.0001) {
+            const angle = ((u.id * 7 + o.id * 13) % 628) / 100; // deterministic pseudo-angle
+            dx = Math.cos(angle);
+            dy = Math.sin(angle);
+            dist = 0.0001;
+          }
+
+          const overlap = minSep - dist;
+          const nx = dx / dist;
+          const ny = dy / dist;
+
+          // Enemies push harder (forms solid front line), allies push softer
+          const sameTeam = u.team === o.team;
+          const strength = sameTeam ? UNIT_COLLISION_PUSH_STRENGTH * 0.5 : UNIT_COLLISION_PUSH_STRENGTH;
+          const push = overlap * strength * 0.5; // half to each unit
+
+          u.x -= nx * push;
+          u.y -= ny * push;
+          o.x += nx * push;
+          o.y += ny * push;
+        }
+      }
+    }
+  }
+
+  for (const unit of units) {
     // Unit-vs-building blocking (skip spawners — units spawn on them)
     for (const building of state.buildings) {
       if (building.type === BuildingType.MeleeSpawner || building.type === BuildingType.RangedSpawner || building.type === BuildingType.CasterSpawner || building.type === BuildingType.HarvesterHut) continue;
@@ -1637,6 +1701,13 @@ function tickCombat(state: GameState): void {
   const AGGRO_BONUS = 2.5;
   const AGGRO_LEASH = 3.5;
 
+  // Count how many units are already targeting each enemy (for target spreading)
+  const attackerCount = new Map<number, number>();
+  for (const u of state.units) {
+    if (u.hp <= 0 || u.targetId === null) continue;
+    attackerCount.set(u.targetId, (attackerCount.get(u.targetId) ?? 0) + 1);
+  }
+
   for (const unit of state.units) {
     // Check if current target is still valid
     if (unit.targetId !== null) {
@@ -1647,19 +1718,33 @@ function tickCombat(state: GameState): void {
         if (dist > unit.range + AGGRO_LEASH) unit.targetId = null;
       }
     }
-    // Acquire new target
+    // Acquire new target — spread across enemies to form a battle line
     if (unit.targetId === null) {
-      let nearest: UnitState | null = null;
-      let nd = Infinity;
+      let best: UnitState | null = null;
+      let bestScore = Infinity;
       for (const o of state.units) {
         if (o.team === unit.team || o.hp <= 0) continue;
         const d = Math.sqrt((o.x - unit.x) ** 2 + (o.y - unit.y) ** 2);
-        if (d <= unit.range + AGGRO_BONUS && d < nd) { nearest = o; nd = d; }
+        if (d > unit.range + AGGRO_BONUS) continue;
+        // Penalize targets that already have many melee attackers
+        // so units spread across the front line instead of dog-piling.
+        // Cap at 3 tiles so units don't ignore nearby enemies to walk past them.
+        const attackers = attackerCount.get(o.id) ?? 0;
+        const crowdPenalty = unit.range <= 2
+          ? Math.min(attackers * 1.2, 3.0)
+          : attackers * 0.3;
+        const score = d + crowdPenalty;
+        if (score < bestScore) { best = o; bestScore = score; }
       }
-      if (nearest) unit.targetId = nearest.id;
+      if (best) {
+        unit.targetId = best.id;
+        attackerCount.set(best.id, (attackerCount.get(best.id) ?? 0) + 1);
+      }
     }
 
     // Chase current target until in attack range.
+    // Melee units that are already fighting hold position rather than chase
+    // deeper into enemy lines — they only re-chase if target breaks away.
     if (unit.targetId !== null) {
       const target = unitById.get(unit.targetId);
       if (target) {
@@ -1667,10 +1752,22 @@ function tickCombat(state: GameState): void {
         const dy = target.y - unit.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
         if (dist > unit.range + 0.15 && dist > 0.001) {
-          const movePerTick = getEffectiveSpeed(unit) / TICK_RATE;
-          const step = Math.min(movePerTick, dist - unit.range);
-          moveWithSlide(unit, target.x, target.y, step, state.diamondCells, state.mapDef);
-          clampToArenaBounds(unit, 0.35, state.mapDef);
+          // Melee engage hold: if we were in range last tick (attackTimer is
+          // counting down) and target moved only slightly, hold position and
+          // let collision/target-switch handle it instead of chasing through.
+          const wasAttacking = unit.range <= 2 && unit.attackTimer > 0;
+          const targetDrifted = dist < unit.range + 1.5;
+          if (wasAttacking && targetDrifted) {
+            // Hold — don't chase, will re-acquire a closer target next tick.
+            // Reset attackTimer so re-acquire doesn't trigger hold again.
+            unit.targetId = null;
+            unit.attackTimer = 0;
+          } else {
+            const movePerTick = getEffectiveSpeed(unit) / TICK_RATE;
+            const step = Math.min(movePerTick, dist - unit.range);
+            moveWithSlide(unit, target.x, target.y, step, state.diamondCells, state.mapDef);
+            clampToArenaBounds(unit, 0.35, state.mapDef);
+          }
         }
       }
     }
@@ -1967,7 +2064,6 @@ function tickHQDefense(state: GameState): void {
     addFloatingText(state, closestHarv.x, closestHarv.y, `-${HQ_DAMAGE}`, '#ffaa00');
     if (closestHarv.hp <= 0) {
       addDeathParticles(state, closestHarv.x, closestHarv.y, '#ffaa00', 4);
-      if (closestHarv.carryingDiamond) dropDiamond(state, closestHarv.x, closestHarv.y);
       killHarvester(state, closestHarv);
     }
   }
@@ -2058,7 +2154,6 @@ function tickTowers(state: GameState): void {
       addFloatingText(state, closestHarv.x, closestHarv.y, `-${stats.damage}`, '#ffaa00');
       if (closestHarv.hp <= 0) {
         addDeathParticles(state, closestHarv.x, closestHarv.y, '#ffaa00', 4);
-        if (closestHarv.carryingDiamond) dropDiamond(state, closestHarv.x, closestHarv.y);
         killHarvester(state, closestHarv);
       }
       building.actionTimer = Math.round(stats.attackSpeed * TICK_RATE);
@@ -2519,7 +2614,6 @@ function executeNukeDetonation(state: GameState, playerId: number, x: number, y:
     if (h.team !== enemyTeam || h.state === 'dead') continue;
     if ((h.x - x) ** 2 + (h.y - y) ** 2 <= radius * radius) {
       addDeathParticles(state, h.x, h.y, '#ff4400', 6);
-      if (h.carryingDiamond) dropDiamond(state, h.x, h.y);
       killHarvester(state, h);
     }
   }
@@ -2740,7 +2834,6 @@ function tickCenterHarvester(state: GameState, h: HarvesterState, movePerTick: n
         enemyCarrier.hp -= h.damage;
         addFloatingText(state, enemyCarrier.x, enemyCarrier.y, `-${h.damage}`, '#ff8800');
         if (enemyCarrier.hp <= 0) {
-          dropDiamond(state, enemyCarrier.x, enemyCarrier.y);
           killHarvester(state, enemyCarrier);
         }
       }

@@ -28,8 +28,12 @@ const RACES: RaceOption[] = [
   { race: Race.Tenders, label: 'TENDERS', desc: 'Regen + healing', econ: ['uiWood', 'uiGold'] },
 ];
 
+const RANDOM_INDEX = RACES.length; // index 9
+
 const COLS = 3;
 const ROWS = 3;
+
+const LAST_RACE_KEY = 'spawnwars.lastRace';
 
 function woodText(
   ctx: CanvasRenderingContext2D, text: string, x: number, y: number,
@@ -50,6 +54,7 @@ export class RaceSelectScene implements Scene {
   private sprites: SpriteLoader;
   private ui: UIAssets;
   private tick = 0;
+  private sceneAge = 0;
   private settingsOpen = false;
   private music = new SoundManager();
   private audioSettings = getAudioSettings();
@@ -74,18 +79,42 @@ export class RaceSelectScene implements Scene {
     this.audioSettingsUnsub = subscribeToAudioSettings((settings) => {
       this.audioSettings = settings;
     });
-    this.music.startRaceSelectMusic(RACES[this.selectedIndex].race);
+
+    // Restore saved race selection
+    try {
+      const saved = localStorage.getItem(LAST_RACE_KEY);
+      if (saved === 'random') {
+        this.selectedIndex = RANDOM_INDEX;
+      } else if (saved) {
+        const idx = RACES.findIndex(r => r.race === saved);
+        if (idx >= 0) this.selectedIndex = idx;
+      }
+    } catch {}
+
+    const raceForMusic = this.selectedIndex < RACES.length ? RACES[this.selectedIndex].race : Race.Crown;
+    this.music.startRaceSelectMusic(raceForMusic);
 
     this.keyHandler = (e) => {
       const prevIndex = this.selectedIndex;
-      const col = this.selectedIndex % COLS;
-      const row = Math.floor(this.selectedIndex / COLS);
-      if (e.key === 'ArrowLeft' || e.key === 'a') { if (col > 0) this.selectedIndex--; }
-      if (e.key === 'ArrowRight' || e.key === 'd') { if (col < COLS - 1) this.selectedIndex++; }
-      if (e.key === 'ArrowUp' || e.key === 'w') { if (row > 0) this.selectedIndex -= COLS; }
-      if (e.key === 'ArrowDown' || e.key === 's') { if (row < ROWS - 1) this.selectedIndex += COLS; }
-      this.selectedIndex = Math.max(0, Math.min(RACES.length - 1, this.selectedIndex));
-      if (this.selectedIndex !== prevIndex) this.music.previewRaceSelection(RACES[this.selectedIndex].race);
+      if (this.selectedIndex === RANDOM_INDEX) {
+        // Random button: up goes to middle of last row (Geists = 7)
+        if (e.key === 'ArrowUp' || e.key === 'w') this.selectedIndex = 7;
+      } else {
+        const col = this.selectedIndex % COLS;
+        const row = Math.floor(this.selectedIndex / COLS);
+        if (e.key === 'ArrowLeft' || e.key === 'a') { if (col > 0) this.selectedIndex--; }
+        if (e.key === 'ArrowRight' || e.key === 'd') { if (col < COLS - 1) this.selectedIndex++; }
+        if (e.key === 'ArrowUp' || e.key === 'w') { if (row > 0) this.selectedIndex -= COLS; }
+        if (e.key === 'ArrowDown' || e.key === 's') {
+          if (row < ROWS - 1) this.selectedIndex += COLS;
+          else this.selectedIndex = RANDOM_INDEX; // bottom row → Random
+        }
+        this.selectedIndex = Math.max(0, Math.min(RANDOM_INDEX, this.selectedIndex));
+      }
+      if (this.selectedIndex !== prevIndex) {
+        const race = this.selectedIndex < RACES.length ? RACES[this.selectedIndex].race : Race.Crown;
+        this.music.previewRaceSelection(race);
+      }
       if (e.key === 'Enter' || e.key === ' ') this.confirm();
       if (e.key === 'Escape') {
         if (this.settingsOpen) this.settingsOpen = false;
@@ -96,8 +125,15 @@ export class RaceSelectScene implements Scene {
     this.clickHandler = (e) => {
       const [cx, cy] = this.toCanvasCoords(e.clientX, e.clientY);
       if (this.handleSettingsClick(cx, cy)) return;
+      if (this.isBackButtonAt(cx, cy)) { this.manager.switchTo('title'); return; }
+      if (this.isRandomButtonAt(cx, cy)) {
+        if (this.selectedIndex === RANDOM_INDEX) { this.confirm(); return; }
+        this.selectedIndex = RANDOM_INDEX;
+        return;
+      }
       const idx = this.getBoxIndexAt(cx, cy);
       if (idx >= 0) {
+        if (idx === this.selectedIndex) { this.confirm(); return; }
         this.selectedIndex = idx;
         this.music.previewRaceSelection(RACES[this.selectedIndex].race);
       } else if (this.isStartButtonAt(cx, cy)) {
@@ -107,7 +143,8 @@ export class RaceSelectScene implements Scene {
 
     this.moveHandler = (e) => {
       const [cx, cy] = this.toCanvasCoords(e.clientX, e.clientY);
-      this.hoverIndex = this.getBoxIndexAt(cx, cy);
+      const boxIdx = this.getBoxIndexAt(cx, cy);
+      this.hoverIndex = boxIdx >= 0 ? boxIdx : (this.isRandomButtonAt(cx, cy) ? RANDOM_INDEX : -1);
     };
 
     this.touchHandler = (e) => {
@@ -116,8 +153,15 @@ export class RaceSelectScene implements Scene {
       if (!touch) return;
       const [cx, cy] = this.toCanvasCoords(touch.clientX, touch.clientY);
       if (this.handleSettingsClick(cx, cy)) return;
+      if (this.isBackButtonAt(cx, cy)) { this.manager.switchTo('title'); return; }
+      if (this.isRandomButtonAt(cx, cy)) {
+        if (this.selectedIndex === RANDOM_INDEX) { this.confirm(); return; }
+        this.selectedIndex = RANDOM_INDEX;
+        return;
+      }
       const idx = this.getBoxIndexAt(cx, cy);
       if (idx >= 0) {
+        if (idx === this.selectedIndex) { this.confirm(); return; }
         this.selectedIndex = idx;
         this.music.previewRaceSelection(RACES[this.selectedIndex].race);
       } else if (this.isStartButtonAt(cx, cy)) {
@@ -170,7 +214,15 @@ export class RaceSelectScene implements Scene {
   }
 
   private confirm(): void {
-    this.onConfirm(RACES[this.selectedIndex].race);
+    let race: Race;
+    if (this.selectedIndex === RANDOM_INDEX) {
+      race = RACES[Math.floor(Math.random() * RACES.length)].race;
+      try { localStorage.setItem(LAST_RACE_KEY, 'random'); } catch {}
+    } else {
+      race = RACES[this.selectedIndex].race;
+      try { localStorage.setItem(LAST_RACE_KEY, race); } catch {}
+    }
+    this.onConfirm(race);
   }
 
   private getBoxLayout(): { x: number; y: number; w: number; h: number }[] {
@@ -204,13 +256,26 @@ export class RaceSelectScene implements Scene {
     return [clientX - rect.left, clientY - rect.top];
   }
 
-  private isStartButtonAt(cx: number, cy: number): boolean {
+  private getButtonRow(): { backX: number; nextX: number; btnW: number; btnH: number; btnY: number } {
     const w = this.canvas.clientWidth;
     const h = this.canvas.clientHeight;
-    const btnW = 260;
-    const btnH = 56;
+    const btnGap = 10;
+    const totalBtnW = Math.min(w * 0.9, 440);
+    const btnW = (totalBtnW - btnGap) / 2;
+    const rowX = (w - totalBtnW) / 2;
+    return { backX: rowX, nextX: rowX + btnW + btnGap, btnW, btnH: 56, btnY: h - 72 };
+  }
+
+  private isStartButtonAt(cx: number, cy: number): boolean {
+    const { nextX, btnW, btnH, btnY } = this.getButtonRow();
     const pad = 8;
-    return cx >= (w - btnW) / 2 - pad && cx <= (w + btnW) / 2 + pad && cy >= h - 72 - pad && cy <= h - 72 + btnH + pad;
+    return cx >= nextX - pad && cx <= nextX + btnW + pad && cy >= btnY - pad && cy <= btnY + btnH + pad;
+  }
+
+  private isBackButtonAt(cx: number, cy: number): boolean {
+    const { backX, btnW, btnH, btnY } = this.getButtonRow();
+    const pad = 8;
+    return cx >= backX - pad && cx <= backX + btnW + pad && cy >= btnY - pad && cy <= btnY + btnH + pad;
   }
 
   private getBoxIndexAt(cx: number, cy: number): number {
@@ -222,7 +287,27 @@ export class RaceSelectScene implements Scene {
     return -1;
   }
 
-  update(_dt: number): void { this.tick++; }
+  private getRandomButtonRect(): { x: number; y: number; w: number; h: number } {
+    const boxes = this.getBoxLayout();
+    const lastRow = boxes[RACES.length - 1]; // Tenders (bottom-right)
+    const btnW = lastRow.w * 0.8;
+    const btnH = Math.max(22, lastRow.h * 0.22);
+    const gridBottom = lastRow.y + lastRow.h;
+    return {
+      x: (this.canvas.clientWidth - btnW) / 2,
+      y: gridBottom + 6,
+      w: btnW,
+      h: btnH,
+    };
+  }
+
+  private isRandomButtonAt(cx: number, cy: number): boolean {
+    const r = this.getRandomButtonRect();
+    const pad = 6;
+    return cx >= r.x - pad && cx <= r.x + r.w + pad && cy >= r.y - pad && cy <= r.y + r.h + pad;
+  }
+
+  update(_dt: number): void { this.tick++; this.sceneAge += _dt; }
 
   render(ctx: CanvasRenderingContext2D): void {
     const w = ctx.canvas.clientWidth;
@@ -347,23 +432,95 @@ export class RaceSelectScene implements Scene {
       ctx.restore();
     }
 
-    const btnW = 260;
+    // Random button below the grid — styled like the race cards
+    {
+      const rb = this.getRandomButtonRect();
+      const isRandSelected = this.selectedIndex === RANDOM_INDEX;
+      const isRandHover = this.hoverIndex === RANDOM_INDEX;
+      const randColor = '#ffd740';
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(rb.x, rb.y, rb.w, rb.h);
+      ctx.clip();
+
+      const bgPadX = Math.round(rb.w * 0.075);
+      const bgPadY = Math.round(rb.h * 0.075);
+      this.ui.drawWoodTable(ctx, rb.x - bgPadX, rb.y - bgPadY, rb.w + bgPadX * 2, rb.h + bgPadY * 2);
+
+      if (isRandSelected) {
+        ctx.strokeStyle = randColor;
+        ctx.shadowColor = randColor;
+        ctx.shadowBlur = 16;
+        ctx.lineWidth = 3;
+        ctx.strokeRect(rb.x + 1, rb.y + 1, rb.w - 2, rb.h - 2);
+        ctx.shadowBlur = 0;
+      } else if (isRandHover) {
+        ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(rb.x + 1, rb.y + 1, rb.w - 2, rb.h - 2);
+      }
+
+      const randFontSize = Math.max(10, Math.min(rb.h * 0.55, 14));
+      ctx.font = `bold ${randFontSize}px monospace`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      woodText(ctx, '? RANDOM ?', rb.x + rb.w / 2, rb.y + rb.h / 2, isRandSelected ? randColor : 'rgba(255,255,255,0.6)');
+
+      if (isRandSelected) {
+        const selRibW = rb.w * 0.35;
+        const selRibH = randFontSize * 1.2;
+        const selRibX = rb.x + rb.w - selRibW - 8;
+        const selRibY = rb.y + (rb.h - selRibH) / 2;
+        this.ui.drawSmallRibbon(ctx, selRibX, selRibY, selRibW, selRibH, 0);
+        ctx.font = `bold ${randFontSize * 0.55}px monospace`;
+        ctx.fillStyle = '#fff';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('SELECTED', selRibX + selRibW / 2, selRibY + selRibH * 0.55);
+      }
+
+      ctx.restore();
+    }
+
+    // Bottom button row: BACK (left) + NEXT (right)
+    const btnGap = 10;
+    const totalBtnW = Math.min(w * 0.9, 440);
+    const btnW = (totalBtnW - btnGap) / 2;
     const btnH = 56;
-    const btnX = (w - btnW) / 2;
     const btnY = h - 72;
-    this.ui.drawSword(ctx, btnX, btnY, btnW, btnH, 0);
+    const rowX = (w - totalBtnW) / 2;
 
-    ctx.font = 'bold 18px monospace';
-    ctx.textAlign = 'center';
-    const textX = btnX + btnW * 0.52;
-    ctx.fillStyle = 'rgba(0,0,0,0.5)';
-    ctx.fillText('NEXT', textX + 1, btnY + btnH * 0.58 + 1);
-    ctx.fillStyle = '#fff';
-    ctx.fillText('NEXT', textX, btnY + btnH * 0.58);
+    // BACK sword (dark variant 4)
+    const backX = rowX;
+    const rb = UIAssets.swordReveal(this.sceneAge, 0);
+    const obx = this.ui.drawSword(ctx, backX, btnY, btnW, btnH, 4, rb);
+    if (rb > 0) {
+      ctx.font = 'bold 16px monospace';
+      ctx.textAlign = 'center';
+      ctx.globalAlpha = rb;
+      const backTextX = backX + btnW * 0.52 + obx;
+      ctx.fillStyle = 'rgba(0,0,0,0.5)';
+      ctx.fillText('BACK', backTextX + 1, btnY + btnH * 0.58 + 1);
+      ctx.fillStyle = '#fff';
+      ctx.fillText('BACK', backTextX, btnY + btnH * 0.58);
+      ctx.globalAlpha = 1;
+    }
 
-    ctx.font = `${hintSize}px monospace`;
-    ctx.fillStyle = 'rgba(255,255,255,0.4)';
-    ctx.fillText('ESC to go back', w / 2, h - 10);
+    // NEXT sword (blue variant 0)
+    const nextX = rowX + btnW + btnGap;
+    const rn = UIAssets.swordReveal(this.sceneAge, 1);
+    const onx = this.ui.drawSword(ctx, nextX, btnY, btnW, btnH, 0, rn);
+    if (rn > 0) {
+      ctx.font = 'bold 16px monospace';
+      ctx.globalAlpha = rn;
+      const nextTextX = nextX + btnW * 0.52 + onx;
+      ctx.fillStyle = 'rgba(0,0,0,0.5)';
+      ctx.fillText('NEXT', nextTextX + 1, btnY + btnH * 0.58 + 1);
+      ctx.fillStyle = '#fff';
+      ctx.fillText('NEXT', nextTextX, btnY + btnH * 0.58);
+      ctx.globalAlpha = 1;
+    }
 
     const settingsLayout = getSettingsOverlayLayout(w, h);
     drawSettingsButton(ctx, this.ui, settingsLayout.button, this.settingsOpen);

@@ -12,7 +12,8 @@ import { Race } from './simulation/types';
 import { BotDifficultyLevel } from './simulation/BotAI';
 import { getMapById } from './simulation/maps';
 import { ProfileScene } from './profile/ProfileScene';
-import { loadProfile, updateProfileFromMatch } from './profile/ProfileData';
+import { loadProfile, updateProfileFromMatch, ACHIEVEMENTS } from './profile/ProfileData';
+import { SoundManager } from './audio/SoundManager';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 if (!canvas) throw new Error('Canvas element not found');
@@ -32,6 +33,10 @@ uiReady.then(() => {
 
   const manager = new SceneManager(canvas);
 
+  // Achievement toast sound
+  const toastSfx = new SoundManager();
+  manager.setOnToastShow(() => toastSfx.playAchievement());
+
   const profile = loadProfile();
   const titleScene = new TitleScene(manager, canvas, sharedUI, sharedSprites);
   titleScene.profile = profile;
@@ -43,13 +48,24 @@ uiReady.then(() => {
   const matchScene = new MatchScene(canvas, sharedUI, (game) => {
     recordMatch(game.state);
     const newAch = updateProfileFromMatch(profile, game.state, game.playerSlot);
-    if (newAch.length > 0) console.log('[Profile] New achievements:', newAch);
+    for (const achId of newAch) {
+      const def = ACHIEVEMENTS.find(a => a.id === achId);
+      if (def) manager.showToast(`Achievement: ${def.name}`, def.desc);
+    }
     postMatchScene.setStats({ state: game.state, localPlayerId: game.playerSlot });
     // Clean up party data from Firebase when match ends
     if (titleScene.party) {
       titleScene.party.leaveParty();
     }
     manager.switchTo('postMatch');
+  });
+
+  matchScene.setOnQuitGame(() => {
+    // Clean up party data from Firebase on quit
+    if (titleScene.party) {
+      titleScene.party.leaveParty();
+    }
+    manager.switchTo('title');
   });
 
   const raceSelectScene = new RaceSelectScene(manager, canvas, sharedSprites, sharedUI, (race) => {
@@ -66,19 +82,47 @@ uiReady.then(() => {
   titleScene.onPartyStart = (party, localSlot) => {
     const mapDef = getMapById(party.mapId);
     const difficulty = (party.difficulty as BotDifficultyLevel) ?? BotDifficultyLevel.Medium;
-    // Build human player list from party slots
+    const allRaces = [Race.Crown, Race.Horde, Race.Goblins, Race.Oozlings, Race.Demon, Race.Deep, Race.Wild, Race.Geists, Race.Tenders];
+    // Build human player list from party slots, resolve random races
     const humanPlayers: { slot: number; race: Race }[] = [];
     for (let i = 0; i < party.maxSlots; i++) {
       const p = party.players[String(i)];
-      if (p) humanPlayers.push({ slot: i, race: p.race });
+      if (p) {
+        const race = (p.race as string) === 'random'
+          ? allRaces[Math.floor(Math.random() * allRaces.length)]
+          : p.race;
+        humanPlayers.push({ slot: i, race });
+      }
     }
     matchScene.setPartyConfig({
       humanPlayers,
       slotBots: party.bots,
+      slotBotRaces: (party as any).botRaces,
       localSlot,
       seed: party.seed,
       partyCode: party.code,
       botDifficulty: difficulty,
+      mapDef,
+    });
+    manager.switchTo('match');
+  };
+
+  // Local setup start callback: solo game with configured bot slots
+  titleScene.onLocalStart = (setup) => {
+    const mapDef = getMapById(setup.mapId);
+    // Resolve 'random' player race
+    const allRaces = [Race.Crown, Race.Horde, Race.Goblins, Race.Oozlings, Race.Demon, Race.Deep, Race.Wild, Race.Geists, Race.Tenders];
+    const playerRace = setup.playerRace === 'random'
+      ? allRaces[Math.floor(Math.random() * allRaces.length)]
+      : setup.playerRace;
+    matchScene.setPartyConfig({
+      humanPlayers: [{ slot: setup.playerSlot, race: playerRace }],
+      slotBots: setup.bots,
+      slotBotRaces: setup.botRaces,
+      localSlot: setup.playerSlot,
+      seed: Math.floor(Math.random() * 2147483647),
+      partyCode: '',  // empty = local game, no CommandSync
+      botDifficulty: BotDifficultyLevel.Medium,
       mapDef,
     });
     manager.switchTo('match');

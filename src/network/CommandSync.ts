@@ -308,6 +308,32 @@ export class CommandSync {
     return { commands: allCmds, remoteHash };
   }
 
+  /** Write a leave signal so remaining players can replace this slot with a bot. */
+  broadcastLeave(): void {
+    try {
+      const db = getDb();
+      set(ref(db, `games/${this.partyCode}/left/${this.localSlotId}`), true).catch(() => {});
+    } catch {
+      // DB may not be available
+    }
+  }
+
+  /** Called when a remote player's leave signal is detected. */
+  onPlayerLeft: ((slotId: number) => void) | null = null;
+
+  /** Start listening for leave signals from remote players. */
+  listenForLeaves(): void {
+    const db = getDb();
+    for (const remoteId of this.remoteSlotIds) {
+      const unsub = onValue(ref(db, `games/${this.partyCode}/left/${remoteId}`), (snap) => {
+        if (snap.val() === true) {
+          this.onPlayerLeft?.(remoteId);
+        }
+      });
+      this.unsubs.push(unsub);
+    }
+  }
+
   stop(): void {
     if (this.connectionTimeout) {
       clearTimeout(this.connectionTimeout);

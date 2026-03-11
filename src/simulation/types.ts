@@ -195,6 +195,8 @@ export interface MapDef {
   /** Shared tower alley dimensions (per team) */
   towerAlleyCols: number;      // 20 for duel, 12 for skirmish (rotated)
   towerAlleyRows: number;      // 12 for duel, 20 for skirmish (rotated)
+  /** Per-team nuke allowed range along shapeAxis (team 0, team 1) */
+  nukeZone: [{ min: number; max: number }, { min: number; max: number }];
   /** Returns true if tile (x, y) is within the playable map boundary */
   isPlayable(x: number, y: number): boolean;
   /** Returns the playable x-range for a given row (portrait) or y-range for a given col (landscape) */
@@ -283,6 +285,7 @@ export interface PlayerState {
   nukeAvailable: boolean;
   connected: boolean;
   isBot: boolean;
+  isEmpty: boolean;  // true = slot is unoccupied (no buildings, no income, no AI)
   hasBuiltTower: boolean;
 }
 
@@ -379,7 +382,6 @@ export interface WoodPileState {
   x: number;
   y: number;
   amount: number;
-  age: number;
 }
 
 export interface DiamondState {

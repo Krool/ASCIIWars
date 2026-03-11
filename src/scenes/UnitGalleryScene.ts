@@ -173,11 +173,13 @@ export class UnitGalleryScene implements Scene {
     const tab = TAB_PATHS[this.activeTab];
     const upgradeTier = tab.path.length - 1; // 0, 1, or 2
 
-    // Layout constants
+    // Layout constants — responsive to screen width
     const rowH = 110;
-    const unitSpacing = 160;
-    const headerH = 84;
-    const labelW = 110;
+    const headerH = 98;
+    const labelPad = 14; // left margin for race label (overlaps first unit column)
+    const colMargin = 20; // margin on each side of the 3 columns
+    const unitSpacing = Math.min(160, Math.max(100, Math.floor((W - colMargin * 2) / 3)));
+    const colStartX = Math.max(colMargin, Math.floor((W - unitSpacing * 3) / 2));
     const totalContentH = headerH + ALL_RACES.length * rowH + 40;
 
     // Clamp scroll
@@ -200,11 +202,11 @@ export class UnitGalleryScene implements Scene {
       ctx.fillStyle = r % 2 === 0 ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.1)';
       ctx.fillRect(0, rowY, W, rowH);
 
-      // Race label — top-left of row
+      // Race label — top-left of row (overlaps first unit column)
       ctx.fillStyle = rc.primary;
       ctx.font = 'bold 15px monospace';
       ctx.textAlign = 'left';
-      ctx.fillText(RACE_LABELS[race], 12, rowY + 16);
+      ctx.fillText(RACE_LABELS[race], labelPad, rowY + 16);
 
       // Draw each unit category
       for (let c = 0; c < CATEGORIES.length; c++) {
@@ -212,7 +214,7 @@ export class UnitGalleryScene implements Scene {
         const baseStats = UNIT_STATS[race]?.[bt];
         if (!baseStats) continue;
 
-        const unitCX = labelW + 20 + c * unitSpacing + unitSpacing / 2;
+        const unitCX = colStartX + c * unitSpacing + unitSpacing / 2;
         const unitCY = rowY + rowH * 0.38;
 
         // Get upgrade info for this tab
@@ -383,10 +385,9 @@ export class UnitGalleryScene implements Scene {
     ctx.fillStyle = '#aaa';
     ctx.font = '11px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText(tab.desc + `  [path: ${tab.path.join('\u2192')}]`, W / 2, headerH - 4);
+    ctx.fillText(tab.desc + `  [path: ${tab.path.join('\u2192')}]`, W / 2, 72);
 
-    // Column headers
-    const colStartX = labelW + 20;
+    // Column headers — same layout as unit columns
     ctx.font = 'bold 12px monospace';
     ctx.fillStyle = '#777';
     for (let c = 0; c < CATEGORIES.length; c++) {

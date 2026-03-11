@@ -805,26 +805,24 @@ export class Renderer {
       ctx.textAlign = 'start';
     };
 
+    const woodResData = this.sprites.getResourceSprite('woodResource');
     const drawWoodPile = (x: number, y: number, amount: number) => {
       const px = x * T;
       const py = y * T;
-      const size = Math.min(1.15, 0.58 + amount * 0.08) * T;
-      ctx.fillStyle = 'rgba(0,0,0,0.16)';
+      const size = Math.min(1.0, 0.5 + amount * 0.05) * T;
+      // Shadow
+      ctx.fillStyle = 'rgba(0,0,0,0.14)';
       ctx.beginPath();
-      ctx.ellipse(px, py + size * 0.22, size * 0.55, size * 0.22, 0, 0, Math.PI * 2);
+      ctx.ellipse(px, py + size * 0.15, size * 0.5, size * 0.18, 0, 0, Math.PI * 2);
       ctx.fill();
-
-      const logs = Math.max(2, Math.min(4, Math.ceil(amount / 3)));
-      for (let i = 0; i < logs; i++) {
-        const row = i % 2;
-        const lx = px + (i - (logs - 1) / 2) * (size * 0.24) + (row === 1 ? size * 0.1 : 0);
-        const ly = py - row * size * 0.12 - Math.floor(i / 2) * size * 0.06;
-        ctx.fillStyle = row === 0 ? '#8d5a35' : '#a56a3f';
-        ctx.fillRect(lx - size * 0.16, ly - size * 0.08, size * 0.32, size * 0.16);
-        ctx.fillStyle = '#d7b083';
+      if (woodResData) {
+        const [img, def] = woodResData;
+        drawSpriteFrame(ctx, img, def, 0, px - size * 0.5, py - size * 0.5, size, size);
+      } else {
+        // Fallback: simple brown circle
+        ctx.fillStyle = '#8d5a35';
         ctx.beginPath();
-        ctx.arc(lx - size * 0.16, ly, size * 0.08, 0, Math.PI * 2);
-        ctx.arc(lx + size * 0.16, ly, size * 0.08, 0, Math.PI * 2);
+        ctx.arc(px, py - size * 0.1, size * 0.35, 0, Math.PI * 2);
         ctx.fill();
       }
     };
@@ -866,14 +864,18 @@ export class Renderer {
       }));
       const drawTree = (data: [HTMLImageElement, { frameW: number; frameH: number; cols: number; url: string }], x: number, y: number, size: number, phase: number) => {
         const [img, def] = data;
+        const aspect = def.frameW / def.frameH; // <1 for tall trees
+        const drawW = size * aspect;
+        const drawH = size;
         const angle = Math.sin(now * 1.15 + phase) * 0.032;
         ctx.save();
         ctx.translate(x, y);
         ctx.rotate(angle);
-        drawSpriteFrame(ctx, img, def, 0, -size / 2, -size * 0.84, size, size);
+        drawSpriteFrame(ctx, img, def, 0, -drawW / 2, -drawH * 0.84, drawW, drawH);
         ctx.restore();
       };
 
+      // Ground shadow ellipses
       ctx.fillStyle = 'rgba(42, 88, 48, 0.18)';
       ctx.beginPath();
       ctx.ellipse(cx, cy + T * 0.5, T * 6.8, T * 2.9, 0, 0, Math.PI * 2);
@@ -884,6 +886,7 @@ export class Renderer {
       ctx.ellipse(cx + T * 1.6, cy + T * 0.45, T * 4.7, T * 1.9, -0.1, 0, Math.PI * 2);
       ctx.fill();
 
+      // Per-tree shadows
       for (const anchor of anchors) {
         ctx.fillStyle = 'rgba(0,0,0,0.13)';
         ctx.beginPath();
@@ -899,22 +902,27 @@ export class Renderer {
         ctx.fill();
       }
 
-      anchors.sort((a, b) => a.oy - b.oy);
+      // Interleave trees and wood piles by Y for proper depth
+      const nearbyPiles = state.woodPiles
+        .filter(pile => Math.hypot(pile.x - woodNode.x, pile.y - woodNode.y) < 8);
+      type DrawItem = { sortY: number; draw: () => void };
+      const items: DrawItem[] = [];
       for (const anchor of anchors) {
         const data = sprites[anchor.sprite % sprites.length];
-        drawTree(
+        const ay = cy + anchor.oy * T * 0.48;
+        items.push({ sortY: ay, draw: () => drawTree(
           data,
           cx + anchor.ox * T * 0.72,
-          cy + anchor.oy * T * 0.48,
+          ay,
           anchor.size * T,
           anchor.sprite * 0.9 + anchor.ox * 0.2,
-        );
+        )});
       }
-
-      state.woodPiles
-        .filter(pile => Math.hypot(pile.x - woodNode.x, pile.y - woodNode.y) < 8)
-        .sort((a, b) => a.y - b.y)
-        .forEach(pile => drawWoodPile(pile.x, pile.y, pile.amount));
+      for (const pile of nearbyPiles) {
+        items.push({ sortY: pile.y * T, draw: () => drawWoodPile(pile.x, pile.y, pile.amount) });
+      }
+      items.sort((a, b) => a.sortY - b.sortY);
+      for (const item of items) item.draw();
     } else if (woodNode) {
       drawNodeFallback(woodNode.x, woodNode.y, 'WOOD', 'rgba(76, 175, 80, 0.2)');
       state.woodPiles
@@ -950,6 +958,12 @@ export class Renderer {
     } else if (stoneNode) {
       drawNodeFallback(stoneNode.x, stoneNode.y, 'STONE', 'rgba(158, 158, 158, 0.2)');
     }
+
+    // Stray wood piles (dropped by killed/interrupted harvesters far from the forest)
+    const strayPiles = woodNode
+      ? state.woodPiles.filter(pile => Math.hypot(pile.x - woodNode.x, pile.y - woodNode.y) >= 8)
+      : state.woodPiles;
+    for (const pile of strayPiles) drawWoodPile(pile.x, pile.y, pile.amount);
 
     // Gold nodes near HQs — bigger gold resource sprite
     const goldData = this.sprites.getResourceSprite('goldResource');
@@ -989,7 +1003,7 @@ export class Renderer {
     for (let p = 0; p < maxP; p++) {
       const origin = getBuildGridOrigin(p, state.mapDef);
       const player = state.players[p];
-      if (!player) continue;
+      if (!player || player.isEmpty) continue;
 
       const pc = PLAYER_COLORS[p % PLAYER_COLORS.length];
       const tc = hexToRgba(pc);
@@ -1034,7 +1048,7 @@ export class Renderer {
     const maxP = state.mapDef.maxPlayers;
     for (let p = 0; p < maxP; p++) {
       const player = state.players[p];
-      if (!player) continue;
+      if (!player || player.isEmpty) continue;
       const origin = getHutGridOrigin(p, state.mapDef);
       const pc = PLAYER_COLORS[p % PLAYER_COLORS.length];
       const tc = hexToRgba(pc);

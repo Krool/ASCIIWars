@@ -80,14 +80,24 @@ export class ProfileScene implements Scene {
 
   update(dt: number): void { this.animTime += dt; }
 
+  // ─── Simple panel background (dark rounded rect) ───
+
+  private drawPanel(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number): void {
+    ctx.fillStyle = 'rgba(40, 30, 25, 0.75)';
+    ctx.beginPath(); ctx.roundRect(x, y, w, h, 12); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.roundRect(x, y, w, h, 12); ctx.stroke();
+  }
+
   // ─── Layout ───
 
   private getLayout() {
     const W = this.canvas.clientWidth;
     const H = this.canvas.clientHeight;
-    const headerH = 90;
-    const tabBarY = 42;
-    const tabH = 30;
+    const headerH = 180;
+    const tabBarY = 84;
+    const tabH = 60;
     return { W, H, headerH, tabBarY, tabH };
   }
 
@@ -97,7 +107,7 @@ export class ProfileScene implements Scene {
     const { W, tabBarY, tabH, headerH } = this.getLayout();
 
     // Back button (top-left)
-    if (cy < 36 && cx < 100) {
+    if (cy < 72 && cx < 80) {
       this.manager.switchTo('title');
       return;
     }
@@ -105,8 +115,8 @@ export class ProfileScene implements Scene {
     // Tab bar
     if (cy >= tabBarY && cy <= tabBarY + tabH) {
       const tabs: Tab[] = ['stats', 'achievements', 'avatars'];
-      const gap = 6;
-      const tabW = Math.min(100, (W - 80 - gap * 2) / 3);
+      const gap = 12;
+      const tabW = Math.min(200, (W - 160 - gap * 2) / 3);
       const totalW = tabW * 3 + gap * 2;
       const startX = (W - totalW) / 2;
       for (let i = 0; i < tabs.length; i++) {
@@ -127,11 +137,11 @@ export class ProfileScene implements Scene {
 
   private handleAvatarClick(cx: number, cy: number): void {
     const { W, headerH } = this.getLayout();
-    const pad = 14;
-    const cols = Math.max(3, Math.floor((W - pad * 2 - 20) / 80));
-    const cellSize = Math.floor((W - pad * 2 - 20) / cols);
-    const startX = pad + 10;
-    const startY = headerH + 14 - this.scrollY;
+    const pad = 28;
+    const cols = Math.max(3, Math.floor((W - pad * 2 - 40) / 160));
+    const cellSize = Math.floor((W - pad * 2 - 40) / cols);
+    const startX = pad + 20;
+    const startY = headerH + 28 - this.scrollY;
 
     for (let i = 0; i < ALL_AVATARS.length; i++) {
       const col = i % cols;
@@ -179,22 +189,22 @@ export class ProfileScene implements Scene {
     ctx.fillRect(0, 0, W, headerH);
 
     // Title ribbon
-    const ribbonW = Math.min(W * 0.5, 280);
-    const ribbonH = 32;
+    const ribbonW = Math.min(W * 0.5, 560);
+    const ribbonH = 64;
     const ribbonX = (W - ribbonW) / 2;
-    const ribbonY = 4;
+    const ribbonY = 8;
     this.ui.drawBigRibbon(ctx, ribbonX, ribbonY, ribbonW, ribbonH, 2); // yellow ribbon
-    ctx.font = 'bold 16px monospace';
+    ctx.font = 'bold 32px monospace';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillStyle = '#fff';
     ctx.fillText('PROFILE', W / 2, ribbonY + ribbonH / 2);
 
     // Back button — small blue round
-    const backSize = 32;
+    const backSize = 64;
     this.ui.drawSmallBlueRoundButton(ctx, 8, 6, backSize);
     ctx.fillStyle = '#fff';
-    ctx.font = 'bold 16px monospace';
+    ctx.font = 'bold 32px monospace';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText('<', 8 + backSize / 2, 6 + backSize / 2);
@@ -205,8 +215,8 @@ export class ProfileScene implements Scene {
       { key: 'achievements', label: 'ACHIEVE' },
       { key: 'avatars', label: 'AVATARS' },
     ];
-    const gap = 6;
-    const tabW = Math.min(100, (W - 80 - gap * 2) / 3);
+    const gap = 12;
+    const tabW = Math.min(200, (W - 160 - gap * 2) / 3);
     const totalW = tabW * 3 + gap * 2;
     const startX = (W - totalW) / 2;
     for (let i = 0; i < tabs.length; i++) {
@@ -214,7 +224,7 @@ export class ProfileScene implements Scene {
       const active = this.tab === tabs[i].key;
       this.ui.drawBigBlueButton(ctx, tx, tabBarY, tabW, tabH, active);
       ctx.fillStyle = active ? '#fff' : '#a0c4e8';
-      ctx.font = `bold ${tabW < 80 ? 10 : 11}px monospace`;
+      ctx.font = `bold ${tabW < 160 ? 20 : 22}px monospace`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(tabs[i].label, tx + tabW / 2, tabBarY + tabH / 2);
@@ -222,77 +232,71 @@ export class ProfileScene implements Scene {
 
     // Summary line under tabs
     ctx.fillStyle = '#aaa';
-    ctx.font = '11px monospace';
+    ctx.font = '22px monospace';
     ctx.textBaseline = 'alphabetic';
     ctx.textAlign = 'center';
     const wr = getWinRate(this.profile.wins, this.profile.gamesPlayed);
     ctx.fillText(
       `${this.profile.gamesPlayed} games  |  ${this.profile.wins}W ${this.profile.losses}L  |  ${wr}`,
-      W / 2, headerH - 6,
+      W / 2, headerH - 12,
     );
   }
 
   // ─── Stats Tab ───
 
   private renderStats(ctx: CanvasRenderingContext2D, W: number, _H: number, headerH: number): void {
-    let y = headerH + 10 - this.scrollY;
-    const pad = 14;
+    let y = headerH + 20 - this.scrollY;
+    const pad = 28;
     const panelW = W - pad * 2;
 
-    // ── Overview panel (WoodTable) ──
-    const overH = 100;
-    // Draw 10% oversized so 9-slice borders don't clip content (min 16px)
-    const overflowX1 = Math.max(16, Math.round(panelW * 0.05));
-    const overflowY1 = Math.max(16, Math.round(overH * 0.05));
-    this.ui.drawWoodTable(ctx, pad - overflowX1, y - overflowY1, panelW + overflowX1 * 2, overH + overflowY1 * 2);
+    // ── Overview panel ──
+    const overH = 200;
+    this.drawPanel(ctx, pad, y, panelW, overH);
 
     ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
-    const inset = 22; // content inset from pad edge
-    ctx.font = 'bold 13px monospace'; ctx.fillStyle = '#ffd740';
-    ctx.fillText('Overview', pad + inset, y + 22);
+    const inset = 44; // content inset from pad edge
+    ctx.font = 'bold 26px monospace'; ctx.fillStyle = '#ffd740';
+    ctx.fillText('Overview', pad + inset, y + 44);
 
-    ctx.font = '12px monospace'; ctx.fillStyle = '#e0e0e0';
+    ctx.font = '24px monospace'; ctx.fillStyle = '#e0e0e0';
     const c1 = pad + inset;
     const c2 = pad + panelW / 2;
-    ctx.fillText(`Games: ${this.profile.gamesPlayed}`, c1, y + 42);
-    ctx.fillText(`Wins: ${this.profile.wins}`, c2, y + 42);
-    ctx.fillText(`Losses: ${this.profile.losses}`, c1, y + 60);
-    ctx.fillText(`Win Rate: ${getWinRate(this.profile.wins, this.profile.gamesPlayed)}`, c2, y + 60);
-    ctx.fillText(`Play Time: ${formatTime(this.profile.totalPlayTimeSec)}`, c1, y + 78);
-    ctx.fillText(`Best Streak: ${this.profile.bestWinStreak}`, c2, y + 78);
-    y += overH + 12;
+    ctx.fillText(`Games: ${this.profile.gamesPlayed}`, c1, y + 84);
+    ctx.fillText(`Wins: ${this.profile.wins}`, c2, y + 84);
+    ctx.fillText(`Losses: ${this.profile.losses}`, c1, y + 120);
+    ctx.fillText(`Win Rate: ${getWinRate(this.profile.wins, this.profile.gamesPlayed)}`, c2, y + 120);
+    ctx.fillText(`Play Time: ${formatTime(this.profile.totalPlayTimeSec)}`, c1, y + 156);
+    ctx.fillText(`Best Streak: ${this.profile.bestWinStreak}`, c2, y + 156);
+    y += overH + 24;
 
-    // ── Race stats panel (WoodTable) ──
-    const rowH = 22;
-    const raceH = 36 + ALL_RACES.length * rowH + 14;
-    const overflowX2 = Math.max(16, Math.round(panelW * 0.05));
-    const overflowY2 = Math.max(16, Math.round(raceH * 0.05));
-    this.ui.drawWoodTable(ctx, pad - overflowX2, y - overflowY2, panelW + overflowX2 * 2, raceH + overflowY2 * 2);
+    // ── Race stats panel ──
+    const rowH = 44;
+    const raceH = 72 + ALL_RACES.length * rowH + 28;
+    this.drawPanel(ctx, pad, y, panelW, raceH);
 
-    ctx.font = 'bold 13px monospace'; ctx.fillStyle = '#ffd740';
+    ctx.font = 'bold 26px monospace'; ctx.fillStyle = '#ffd740';
     ctx.textAlign = 'left';
-    ctx.fillText('Race Stats', pad + inset, y + 20);
-    y += 30;
+    ctx.fillText('Race Stats', pad + inset, y + 40);
+    y += 60;
 
     // Column headers
-    ctx.font = 'bold 10px monospace'; ctx.fillStyle = '#999';
-    const rCols = [pad + inset, pad + 100, pad + 155, pad + 210, pad + 275];
+    ctx.font = 'bold 20px monospace'; ctx.fillStyle = '#999';
+    const rCols = [pad + inset, pad + 200, pad + 330, pad + 460];
     ctx.fillText('RACE', rCols[0], y);
     ctx.fillText('GAMES', rCols[1], y);
     ctx.fillText('WIN%', rCols[2], y);
     ctx.fillText('TIME', rCols[3], y);
-    ctx.fillText('DMG', rCols[4], y);
-    y += 6;
+    y += 12;
 
     // Divider line
     ctx.strokeStyle = 'rgba(255,255,255,0.1)';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(pad + 20, y);
-    ctx.lineTo(pad + panelW - 10, y);
+    ctx.moveTo(pad + 40, y);
+    ctx.lineTo(pad + panelW - 20, y);
     ctx.stroke();
 
-    ctx.font = '11px monospace';
+    ctx.font = '22px monospace';
     for (const race of ALL_RACES) {
       y += rowH;
       const rs = this.profile.raceStats[race];
@@ -301,7 +305,7 @@ export class ProfileScene implements Scene {
       // Alternating row bg
       ctx.fillStyle = 'rgba(255,255,255,0.03)';
       if (ALL_RACES.indexOf(race) % 2 === 0) {
-        ctx.fillRect(pad + 14, y - rowH + 6, panelW - 18, rowH);
+        ctx.fillRect(pad + 28, y - rowH + 12, panelW - 36, rowH);
       }
 
       ctx.fillStyle = rc.primary;
@@ -310,27 +314,22 @@ export class ProfileScene implements Scene {
       ctx.fillText(`${rs?.gamesPlayed ?? 0}`, rCols[1], y);
       ctx.fillText(getWinRate(rs?.wins ?? 0, rs?.gamesPlayed ?? 0), rCols[2], y);
       ctx.fillText(formatTime(rs?.playTimeSec ?? 0), rCols[3], y);
-      ctx.fillStyle = '#e57373';
-      ctx.fillText(`${rs?.damageDealt ?? 0}`, rCols[4], y);
     }
   }
 
   // ─── Achievements Tab ───
 
   private renderAchievements(ctx: CanvasRenderingContext2D, W: number, _H: number, headerH: number): void {
-    let y = headerH + 10 - this.scrollY;
-    const pad = 14;
+    let y = headerH + 20 - this.scrollY;
+    const pad = 28;
     const panelW = W - pad * 2;
-    const cardH = 62;
-    const cardGap = 8;
+    const cardH = 124;
+    const cardGap = 16;
 
-    // One big WoodTable panel for all achievements (same style as avatars)
-    const totalCardsH = ACHIEVEMENTS.length * (cardH + cardGap) + 16;
-    const achOverX = Math.max(16, Math.round(panelW * 0.10));
-    const achOverY = Math.max(16, Math.round(totalCardsH * 0.05));
-    this.ui.drawWoodTable(ctx, pad - achOverX, y - achOverY - 4, panelW + achOverX * 2, totalCardsH + achOverY * 2 + 4);
+    const totalCardsH = ACHIEVEMENTS.length * (cardH + cardGap) + 32;
+    this.drawPanel(ctx, pad, y, panelW, totalCardsH);
 
-    y += 8;
+    y += 16;
 
     for (const ach of ACHIEVEMENTS) {
       const state = this.profile.achievements[ach.id];
@@ -339,72 +338,69 @@ export class ProfileScene implements Scene {
 
       // Card inner background
       ctx.fillStyle = unlocked ? 'rgba(100,180,100,0.15)' : 'rgba(0,0,0,0.2)';
-      ctx.beginPath(); ctx.roundRect(pad + 6, y, panelW - 12, cardH, 4); ctx.fill();
+      ctx.beginPath(); ctx.roundRect(pad + 12, y, panelW - 24, cardH, 8); ctx.fill();
 
       // Border
       ctx.strokeStyle = unlocked ? 'rgba(129,199,132,0.4)' : 'rgba(255,255,255,0.06)';
-      ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.roundRect(pad + 6, y, panelW - 12, cardH, 4); ctx.stroke();
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.roundRect(pad + 12, y, panelW - 24, cardH, 8); ctx.stroke();
 
       // Icon area
-      const iconX = pad + 12;
-      const iconY = y + 6;
-      const iconSz = cardH - 12;
+      const iconX = pad + 24;
+      const iconY = y + 12;
+      const iconSz = cardH - 24;
 
       // Icon bg
       ctx.fillStyle = 'rgba(0,0,0,0.3)';
-      ctx.beginPath(); ctx.roundRect(iconX, iconY, iconSz, iconSz, 4); ctx.fill();
+      ctx.beginPath(); ctx.roundRect(iconX, iconY, iconSz, iconSz, 8); ctx.fill();
 
-      if (unlocked && ach.avatarUnlock) {
-        this.drawAvatarSprite(ctx, ach.avatarUnlock, iconX + 2, iconY + 2, iconSz - 4);
-      } else {
-        ctx.fillStyle = '#444';
-        ctx.font = 'bold 20px monospace';
-        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillText('?', iconX + iconSz / 2, iconY + iconSz / 2);
+      if (ach.avatarUnlock) {
+        if (!unlocked) ctx.globalAlpha = 0.4;
+        this.drawAvatarSprite(ctx, ach.avatarUnlock, iconX + 4, iconY + 4, iconSz - 8);
+        if (!unlocked) ctx.globalAlpha = 1;
       }
 
       // Text content
-      const textX = iconX + iconSz + 10;
-      const textW = panelW - 12 - (textX - pad - 6) - 8;
+      const textX = iconX + iconSz + 20;
+      const textW = panelW - 24 - (textX - pad - 12) - 16;
       ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
 
       // Achievement name
-      ctx.font = 'bold 12px monospace';
+      ctx.font = 'bold 24px monospace';
       ctx.fillStyle = unlocked ? '#81c784' : '#e0e0e0';
-      ctx.fillText(ach.name, textX, y + 18);
+      ctx.fillText(ach.name, textX, y + 36);
 
       // Description
-      ctx.font = '10px monospace';
+      ctx.font = '20px monospace';
       ctx.fillStyle = '#999';
-      ctx.fillText(ach.desc, textX, y + 32);
+      ctx.fillText(ach.desc, textX, y + 64);
 
       // Progress bar using UIAssets bar
       const barX = textX;
-      const barY = y + 40;
+      const barY = y + 80;
       const barW = textW;
-      const barH = 10;
+      const barH = 20;
       const pct = Math.min(1, progress / ach.goal);
       if (!this.ui.drawBar(ctx, barX, barY, barW, barH, pct)) {
         // Fallback bar
         ctx.fillStyle = 'rgba(255,255,255,0.08)';
-        ctx.beginPath(); ctx.roundRect(barX, barY, barW, barH, 3); ctx.fill();
+        ctx.beginPath(); ctx.roundRect(barX, barY, barW, barH, 6); ctx.fill();
         ctx.fillStyle = unlocked ? '#81c784' : '#4fc3f7';
         if (pct > 0) {
-          ctx.beginPath(); ctx.roundRect(barX, barY, Math.max(6, barW * pct), barH, 3); ctx.fill();
+          ctx.beginPath(); ctx.roundRect(barX, barY, Math.max(12, barW * pct), barH, 6); ctx.fill();
         }
       }
 
       // Progress text
       ctx.fillStyle = unlocked ? '#81c784' : '#777';
-      ctx.font = 'bold 9px monospace';
+      ctx.font = 'bold 18px monospace';
       ctx.textAlign = 'right';
-      ctx.fillText(`${Math.min(progress, ach.goal)}/${ach.goal}`, pad + panelW - 14, y + 18);
+      ctx.fillText(`${Math.min(progress, ach.goal)}/${ach.goal}`, pad + panelW - 28, y + 36);
 
       if (unlocked) {
         ctx.fillStyle = '#4caf50';
-        ctx.font = 'bold 9px monospace';
-        ctx.fillText('✓', pad + panelW - 14, y + 52);
+        ctx.font = 'bold 18px monospace';
+        ctx.fillText('✓', pad + panelW - 28, y + 104);
       }
 
       y += cardH + cardGap;
@@ -414,19 +410,16 @@ export class ProfileScene implements Scene {
   // ─── Avatars Tab ───
 
   private renderAvatars(ctx: CanvasRenderingContext2D, W: number, _H: number, headerH: number): void {
-    const pad = 14;
+    const pad = 28;
     const panelW = W - pad * 2;
-    const cols = Math.max(3, Math.floor((panelW - 20) / 80));
-    const cellSize = Math.floor((panelW - 20) / cols);
+    const cols = Math.max(3, Math.floor((panelW - 40) / 160));
+    const cellSize = Math.floor((panelW - 40) / cols);
     const rows = Math.ceil(ALL_AVATARS.length / cols);
-    const gridH = rows * cellSize + 16;
-    const startX = pad + 10;
-    const startY = headerH + 14 - this.scrollY;
+    const gridH = rows * cellSize + 32;
+    const startX = pad + 20;
+    const startY = headerH + 28 - this.scrollY;
 
-    // WoodTable background for the grid — 20% wider, 10% taller
-    const avOverX = Math.max(16, Math.round(panelW * 0.10));
-    const avOverY = Math.max(16, Math.round(gridH * 0.05));
-    this.ui.drawWoodTable(ctx, pad - avOverX, startY - avOverY - 4, panelW + avOverX * 2, gridH + avOverY * 2 + 4);
+    this.drawPanel(ctx, pad, startY - 8, panelW, gridH + 8);
 
     for (let i = 0; i < ALL_AVATARS.length; i++) {
       const avatar = ALL_AVATARS[i];
@@ -463,26 +456,29 @@ export class ProfileScene implements Scene {
         ctx.fillStyle = 'rgba(0,0,0,0.4)';
         ctx.beginPath(); ctx.roundRect(ax + 3, ay + 3, cellSize - 6, cellSize - 6, 4); ctx.fill();
         ctx.fillStyle = '#666';
-        ctx.font = 'bold 16px monospace';
+        ctx.font = 'bold 32px monospace';
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillText('?', ax + cellSize / 2, ay + cellSize / 2 - 4);
+        ctx.fillText('?', ax + cellSize / 2, ay + cellSize / 2 - 8);
       }
 
       // Race + category label
       const rc = RACE_COLORS[avatar.race];
-      ctx.font = '7px monospace';
+      ctx.font = '14px monospace';
       ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
       ctx.fillStyle = unlocked ? (rc?.primary ?? '#aaa') : '#444';
       const catLabel = avatar.category === 'melee' ? 'M' : avatar.category === 'ranged' ? 'R' : 'C';
-      ctx.fillText(`${RACE_LABELS[avatar.race]} ${catLabel}`, ax + cellSize / 2, ay + cellSize - 7);
+      ctx.fillText(`${RACE_LABELS[avatar.race]} ${catLabel}`, ax + cellSize / 2, ay + cellSize - 14);
     }
   }
 
   // ─── Draw avatar sprite from ID ───
 
   private drawAvatarSprite(ctx: CanvasRenderingContext2D, avatarId: string, x: number, y: number, size: number): void {
-    const [raceStr, cat] = avatarId.split(':') as [Race, 'melee' | 'ranged' | 'caster'];
-    const sprData = this.sprites.getUnitSprite(raceStr, cat, 0);
+    const parts = avatarId.split(':');
+    const raceStr = parts[0] as Race;
+    const cat = parts[1] as 'melee' | 'ranged' | 'caster';
+    const upgradeNode = parts[2] as string | undefined;
+    const sprData = this.sprites.getUnitSprite(raceStr, cat, 0, false, upgradeNode);
     if (sprData) {
       const [img, def] = sprData;
       const tick = Math.floor(this.animTime / 50);

@@ -8,8 +8,10 @@ import { DUEL_MAP } from '../simulation/maps';
 export interface PartyConfig {
   /** All human players: slot index → race */
   humanPlayers: { slot: number; race: Race }[];
-  /** Per-slot bot difficulty overrides */
+  /** Per-slot bot difficulty overrides. Only listed slots spawn bots. */
   slotBots?: { [slot: string]: string };
+  /** Per-slot bot race. Missing = random. */
+  slotBotRaces?: { [slot: string]: string };
   localSlot: number;
   seed: number;
   partyCode: string;
@@ -27,11 +29,16 @@ export class MatchScene implements Scene {
   private partyConfig: PartyConfig | null = null;
   private ui: UIAssets;
   private onMatchEnd: (game: Game) => void;
+  private onQuitGame: (() => void) | null = null;
 
   constructor(canvas: HTMLCanvasElement, ui: UIAssets, onMatchEnd: (game: Game) => void) {
     this.canvas = canvas;
     this.ui = ui;
     this.onMatchEnd = onMatchEnd;
+  }
+
+  setOnQuitGame(cb: () => void): void {
+    this.onQuitGame = cb;
   }
 
   setPlayerRace(race: Race, botDifficulty: BotDifficultyLevel = BotDifficultyLevel.Medium, mapDef?: MapDef): void {
@@ -51,6 +58,7 @@ export class MatchScene implements Scene {
       this.game = new Game(this.canvas, pc.humanPlayers[0]?.race ?? Race.Crown, this.ui, {
         humanPlayers: pc.humanPlayers,
         slotBots: pc.slotBots,
+        slotBotRaces: pc.slotBotRaces,
         localPlayerId: pc.localSlot,
         seed: pc.seed,
         partyCode: pc.partyCode,
@@ -63,6 +71,9 @@ export class MatchScene implements Scene {
     }
     this.game.onMatchEnd = () => {
       if (this.game) this.onMatchEnd(this.game);
+    };
+    this.game.onQuitGame = () => {
+      this.onQuitGame?.();
     };
     this.game.start();
   }

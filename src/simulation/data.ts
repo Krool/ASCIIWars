@@ -304,6 +304,7 @@ export interface UpgradeSpecial {
   healBonus?: number;           // extra heal amount for support casters
   cleaveTargets?: number;       // melee hits N additional adjacent enemies (Minotaur)
   hopAttack?: boolean;          // unit leaps to target, AoE slow on landing (Frogs)
+  spawnCount?: number;          // override base spawnCount (e.g. Spider Brood=3, Spider Swarm=5)
 }
 
 export interface UpgradeNodeDef {
@@ -537,11 +538,11 @@ export const UPGRADE_TREES: Record<Race, Partial<Record<BuildingType, Record<Upg
   [Race.Wild]: {
     [BuildingType.MeleeSpawner]: {
       B: { name: 'Cave Bear', desc: '+40% HP, +25% dmg', hpMult: 1.40, damageMult: 1.25, spawnSpeedMult: 0.88 },
-      C: { name: 'Spider Brood', desc: '+25% speed, faster atk', moveSpeedMult: 1.25, attackSpeedMult: 0.85, spawnSpeedMult: 0.88 },
+      C: { name: 'Spider Brood', desc: 'Spawn 3 small spiders, +25% speed', hpMult: 0.40, damageMult: 0.40, moveSpeedMult: 1.25, attackSpeedMult: 0.85, special: { spawnCount: 3 }, spawnSpeedMult: 0.88 },
       D: { name: 'Minotaur', desc: '+55% HP, +40% dmg, cleave 3', hpMult: 1.55, damageMult: 1.40, special: { cleaveTargets: 3 }, spawnSpeedMult: 0.82 },
       E: { name: 'Dire Bear', desc: '+65% HP, +35% dmg, 20% dmg reduction', hpMult: 1.65, damageMult: 1.35, special: { damageReductionPct: 0.20 }, spawnSpeedMult: 0.82 },
-      F: { name: 'Viper Nest', desc: '+35% speed, cleave 3, +2 burn', moveSpeedMult: 1.35, special: { cleaveTargets: 3, extraBurnStacks: 2 }, spawnSpeedMult: 0.82 },
-      G: { name: 'Spider Swarm', desc: '+50% dmg, faster atk, 30% dodge', damageMult: 1.50, attackSpeedMult: 0.80, special: { dodgeChance: 0.30 }, spawnSpeedMult: 0.82 },
+      F: { name: 'Viper Nest', desc: 'Spawn 3 snakes, +35% speed, +2 slow', hpMult: 0.45, damageMult: 0.45, moveSpeedMult: 1.35, special: { spawnCount: 3, extraSlowStacks: 2 }, spawnSpeedMult: 0.82 },
+      G: { name: 'Spider Swarm', desc: 'Spawn 5 spiders, faster atk, +2 slow', attackSpeedMult: 0.80, damageMult: 0.45, hpMult: 0.30, special: { spawnCount: 5, extraSlowStacks: 2 }, spawnSpeedMult: 0.82 },
     },
     [BuildingType.RangedSpawner]: {
       B: { name: 'Heavy Chucker', desc: '+30% HP, +30% dmg', hpMult: 1.30, damageMult: 1.30, spawnSpeedMult: 0.88 },

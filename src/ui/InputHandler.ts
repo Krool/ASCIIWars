@@ -3,7 +3,7 @@ import { Camera } from '../rendering/Camera';
 import { Renderer } from '../rendering/Renderer';
 import {
   BuildingType, TILE_SIZE, Lane,
-  HarvesterAssignment, Team, ZONES, Race, UnitState,
+  HarvesterAssignment, Team, Race, UnitState,
 } from '../simulation/types';
 import { getBuildGridOrigin, getTeamAlleyOrigin, getHutGridOrigin } from '../simulation/GameState';
 import { RACE_BUILDING_COSTS, UNIT_STATS, TOWER_STATS, RACE_COLORS } from '../simulation/data';
@@ -90,6 +90,9 @@ export class InputHandler {
   private sprites: SpriteLoader | null = null;
   private buildingPopup = new BuildingPopup();
   private trayTick = 0;
+
+  /** Called when the player taps "Quit Game" in the settings panel. */
+  onQuitGame: (() => void) | null = null;
 
   constructor(game: Game, canvas: HTMLCanvasElement, camera: Camera, ui?: UIAssets, sprites?: SpriteLoader) {
     this.game = game;
@@ -372,15 +375,9 @@ export class InputHandler {
         const tileY = world.y / TILE_SIZE;
         const team = this.game.state.players[this.pid]?.team ?? Team.Bottom;
         const md = this.game.state.mapDef;
-        let inRange: boolean;
-        if (md.shapeAxis === 'y') {
-          inRange = team === Team.Bottom ? tileY >= ZONES.MID.start : tileY <= ZONES.MID.end;
-        } else {
-          // Landscape: Team.Bottom(0) = Left side, Team.Top(1) = Right side
-          const midX = Math.floor(md.width / 2);
-          inRange = team === Team.Bottom ? tileX <= midX : tileX >= midX;
-        }
-        if (!inRange) return; // click in enemy zone — ignore
+        const nukeZone = md.nukeZone[team];
+        const nukeAxis = md.shapeAxis === 'x' ? tileX : tileY;
+        if (nukeAxis < nukeZone.min || nukeAxis > nukeZone.max) return; // click outside nuke zone — ignore
         this.game.sendCommand({
           type: 'fire_nuke', playerId: this.pid,
           x: world.x / TILE_SIZE, y: tileY,
@@ -885,7 +882,7 @@ export class InputHandler {
       const sr = this.getSettingsButtonRect();
       const sx = sr.x + sr.w - 200;
       const sy = sr.y + sr.h + 4;
-      if (cx < sx || cx >= sx + 200 || cy < sy || cy >= sy + 322) {
+      if (cx < sx || cx >= sx + 200 || cy < sy || cy >= sy + 358) {
         this.settingsOpen = false;
         return true;
       }
@@ -894,7 +891,7 @@ export class InputHandler {
         this.settingsOpen = false;
         return true;
       }
-      if (cx >= sx && cx < sx + 200 && cy >= sy && cy < sy + 322) {
+      if (cx >= sx && cx < sx + 200 && cy >= sy && cy < sy + 358) {
         if (cy >= sy + 34 && cy < sy + 58) {
           this.laneToggleMode = this.laneToggleMode === 'double' ? 'single' : 'double';
           this.saveLaneMode();
@@ -929,6 +926,10 @@ export class InputHandler {
         }
         if (cy >= sy + 290 && cy < sy + 314) {
           this.resetUiDefaults();
+        }
+        if (cy >= sy + 326 && cy < sy + 350) {
+          this.settingsOpen = false;
+          this.onQuitGame?.();
         }
         return true;
       }
@@ -1277,9 +1278,9 @@ export class InputHandler {
       const sx = sr.x + sr.w - 200;
       const sy = sr.y + sr.h + 4;
       // Settings container - WoodTable 9-slice
-      if (!this.ui.drawWoodTable(ctx, sx, sy, 200, 322)) {
+      if (!this.ui.drawWoodTable(ctx, sx, sy, 200, 358)) {
         ctx.fillStyle = 'rgba(0,0,0,0.88)';
-        ctx.fillRect(sx, sy, 200, 322);
+        ctx.fillRect(sx, sy, 200, 358);
       }
       ctx.fillStyle = '#fff';
       ctx.font = 'bold 12px monospace';
@@ -1382,6 +1383,15 @@ export class InputHandler {
       ctx.fillStyle = '#ffcc80';
       ctx.font = 'bold 12px monospace';
       ctx.fillText('Reset Defaults', sx + 16, sy + 306);
+
+      // Quit Game button
+      ctx.fillStyle = 'rgba(80,20,20,0.9)';
+      ctx.fillRect(sx + 8, sy + 326, 184, 24);
+      ctx.strokeStyle = '#ff5252';
+      ctx.strokeRect(sx + 8, sy + 326, 184, 24);
+      ctx.fillStyle = '#ff5252';
+      ctx.font = 'bold 12px monospace';
+      ctx.fillText('Quit Game', sx + 16, sy + 342);
     }
 
     // Building popup (in-world)
@@ -2007,22 +2017,23 @@ export class InputHandler {
     // Draw red blocked zone over enemy half (can't nuke there)
     const mapDef = this.game.state.mapDef;
     let forbidScreenX1: number, forbidScreenY1: number, forbidScreenX2: number, forbidScreenY2: number;
+    // Forbidden = everything outside the team's nukeZone
+    const nukeZone = mapDef.nukeZone[team];
     if (mapDef.shapeAxis === 'y') {
-      // Portrait: forbidden zone is enemy's vertical half
-      const forbiddenMinY = team === Team.Bottom ? 0 : ZONES.MID.end;
-      const forbiddenMaxY = team === Team.Bottom ? ZONES.MID.start : mapDef.height;
+      // Portrait: forbidden zone along y-axis
+      const forbidMinY = nukeZone.min > 0 ? 0 : nukeZone.max;
+      const forbidMaxY = nukeZone.min > 0 ? nukeZone.min : mapDef.height;
       forbidScreenX1 = (0 - cam.x) * cam.zoom;
-      forbidScreenY1 = (forbiddenMinY * TILE_SIZE - cam.y) * cam.zoom;
+      forbidScreenY1 = (forbidMinY * TILE_SIZE - cam.y) * cam.zoom;
       forbidScreenX2 = (mapDef.width * TILE_SIZE - cam.x) * cam.zoom;
-      forbidScreenY2 = (forbiddenMaxY * TILE_SIZE - cam.y) * cam.zoom;
+      forbidScreenY2 = (forbidMaxY * TILE_SIZE - cam.y) * cam.zoom;
     } else {
-      // Landscape: forbidden zone is enemy's horizontal half
-      const midX = Math.floor(mapDef.width / 2);
-      const forbiddenMinX = team === Team.Bottom ? midX : 0;
-      const forbiddenMaxX = team === Team.Bottom ? mapDef.width : midX;
-      forbidScreenX1 = (forbiddenMinX * TILE_SIZE - cam.x) * cam.zoom;
+      // Landscape: forbidden zone along x-axis
+      const forbidMinX = nukeZone.min > 0 ? 0 : nukeZone.max;
+      const forbidMaxX = nukeZone.min > 0 ? nukeZone.min : mapDef.width;
+      forbidScreenX1 = (forbidMinX * TILE_SIZE - cam.x) * cam.zoom;
       forbidScreenY1 = (0 - cam.y) * cam.zoom;
-      forbidScreenX2 = (forbiddenMaxX * TILE_SIZE - cam.x) * cam.zoom;
+      forbidScreenX2 = (forbidMaxX * TILE_SIZE - cam.x) * cam.zoom;
       forbidScreenY2 = (mapDef.height * TILE_SIZE - cam.y) * cam.zoom;
     }
     ctx.fillStyle = 'rgba(255, 0, 0, 0.15)';
@@ -2033,13 +2044,14 @@ export class InputHandler {
     ctx.lineWidth = 3;
     ctx.setLineDash([10, 6]);
     if (mapDef.shapeAxis === 'y') {
-      const borderY = team === Team.Bottom ? forbidScreenY1 + (forbidScreenY2 - forbidScreenY1) : forbidScreenY1;
+      // Border at the edge between forbidden and allowed zones
+      const borderY = nukeZone.min > 0 ? forbidScreenY2 : forbidScreenY1;
       ctx.beginPath();
       ctx.moveTo(forbidScreenX1, borderY);
       ctx.lineTo(forbidScreenX2, borderY);
       ctx.stroke();
     } else {
-      const borderX = team === Team.Bottom ? forbidScreenX1 : forbidScreenX2;
+      const borderX = nukeZone.min > 0 ? forbidScreenX2 : forbidScreenX1;
       ctx.beginPath();
       ctx.moveTo(borderX, forbidScreenY1);
       ctx.lineTo(borderX, forbidScreenY2);
