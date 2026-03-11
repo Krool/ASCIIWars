@@ -1,7 +1,7 @@
 import {
   GameState, PlayerState, DiamondState, Team, Race, Lane, MapDef, createPlayerStats,
   MAP_WIDTH, MAP_HEIGHT, HQ_HP, HQ_WIDTH, HQ_HEIGHT,
-  BUILD_GRID_COLS, BUILD_GRID_ROWS, SHARED_ALLEY_COLS, SHARED_ALLEY_ROWS, ZONES, TICK_RATE,
+  BUILD_GRID_COLS, BUILD_GRID_ROWS, ZONES, TICK_RATE,
   DIAMOND_CENTER_X, DIAMOND_CENTER_Y, DIAMOND_HALF_W, DIAMOND_HALF_H,
   WOOD_NODE_X, STONE_NODE_X,
   GOLD_PER_CELL, GoldCell, CROSS_BASE_MARGIN, CROSS_BASE_WIDTH,
@@ -520,6 +520,9 @@ export function simulateTick(state: GameState, commands: GameCommand[]): void {
   if (state.matchPhase === 'ended') {
     // Compute war heroes once on first ended tick
     if (state.warHeroes.length === 0) computeWarHeroes(state);
+    // Clean up any units that died on the tick the match ended
+    // (projectiles/burn DoT can kill after tickCombat's filter ran)
+    state.units = state.units.filter(u => u.hp > 0);
     tickEffects(state);
     state.tick++;
     return;
@@ -674,7 +677,7 @@ function placeBuilding(state: GameState, cmd: Extract<GameCommand, { type: 'plac
   if (isAlley) {
     // Shared tower alley: only towers allowed; occupancy is team-wide
     if (cmd.buildingType !== BuildingType.Tower) return;
-    if (cmd.gridX < 0 || cmd.gridX >= SHARED_ALLEY_COLS || cmd.gridY < 0 || cmd.gridY >= SHARED_ALLEY_ROWS) return;
+    if (cmd.gridX < 0 || cmd.gridX >= state.mapDef.towerAlleyCols || cmd.gridY < 0 || cmd.gridY >= state.mapDef.towerAlleyRows) return;
     const playerTeam = state.players[cmd.playerId]?.team ?? (cmd.playerId < 2 ? Team.Bottom : Team.Top);
     if (state.buildings.some(b => b.buildGrid === 'alley' &&
         (state.players[b.playerId]?.team ?? (b.playerId < 2 ? Team.Bottom : Team.Top)) === playerTeam &&
@@ -691,20 +694,19 @@ function placeBuilding(state: GameState, cmd: Extract<GameCommand, { type: 'plac
     addSound(state, 'building_placed', world.x, world.y);
     if (isFirstTower) player.hasBuiltTower = true;
   } else {
-    // Military grid
+    // Military grid — towers not allowed here (must use tower alley)
+    if (cmd.buildingType === BuildingType.Tower) return;
     if (cmd.gridX < 0 || cmd.gridX >= state.mapDef.buildGridCols || cmd.gridY < 0 || cmd.gridY >= state.mapDef.buildGridRows) return;
     if (state.buildings.some(b => b.buildGrid === 'military' && b.playerId === cmd.playerId && b.gridX === cmd.gridX && b.gridY === cmd.gridY)) return;
-    if (!isFirstTower) { player.gold -= cost.gold; player.wood -= cost.wood; player.stone -= cost.stone; }
+    player.gold -= cost.gold; player.wood -= cost.wood; player.stone -= cost.stone;
     const world = gridSlotToWorld(cmd.playerId, cmd.gridX, cmd.gridY, state.mapDef);
-    const initialTimer = cmd.buildingType === BuildingType.Tower ? 0 : SPAWN_INTERVAL_TICKS;
     state.buildings.push({
       id: genId(state), type: cmd.buildingType, playerId: cmd.playerId, buildGrid: 'military',
       gridX: cmd.gridX, gridY: cmd.gridY, worldX: world.x, worldY: world.y,
       lane: isLeft ? Lane.Left : Lane.Right,
-      hp: cost.hp, maxHp: cost.hp, actionTimer: initialTimer, placedTick: state.tick, upgradePath: ['A'],
+      hp: cost.hp, maxHp: cost.hp, actionTimer: SPAWN_INTERVAL_TICKS, placedTick: state.tick, upgradePath: ['A'],
     });
     addSound(state, 'building_placed', world.x, world.y);
-    if (isFirstTower) player.hasBuiltTower = true;
   }
 }
 

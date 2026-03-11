@@ -3,7 +3,7 @@ import { SpriteLoader, drawSpriteFrame, drawGridFrame, type SpriteDef, type Grid
 import { UIAssets } from './UIAssets';
 import {
   GameState, Team, MAP_WIDTH, MAP_HEIGHT, TILE_SIZE,
-  ZONES, SHARED_ALLEY_COLS, SHARED_ALLEY_ROWS,
+  ZONES,
   HQ_WIDTH, HQ_HEIGHT, HQ_HP,
   BuildingType, Lane, Vec2,
   StatusType, Race, ResourceType,
@@ -953,32 +953,34 @@ export class Renderer {
       const origin = getTeamAlleyOrigin(team, state.mapDef);
       const color = team === Team.Bottom ? '41,121,255' : '255,23,68';
 
+      const aCols = state.mapDef.towerAlleyCols;
+      const aRows = state.mapDef.towerAlleyRows;
       ctx.fillStyle = `rgba(${color},0.15)`;
-      ctx.fillRect(origin.x * T, origin.y * T, SHARED_ALLEY_COLS * T, SHARED_ALLEY_ROWS * T);
+      ctx.fillRect(origin.x * T, origin.y * T, aCols * T, aRows * T);
 
       ctx.strokeStyle = `rgba(${color},0.35)`;
       ctx.lineWidth = 0.5;
-      for (let gx = 0; gx <= SHARED_ALLEY_COLS; gx++) {
+      for (let gx = 0; gx <= aCols; gx++) {
         ctx.beginPath();
         ctx.moveTo((origin.x + gx) * T, origin.y * T);
-        ctx.lineTo((origin.x + gx) * T, (origin.y + SHARED_ALLEY_ROWS) * T);
+        ctx.lineTo((origin.x + gx) * T, (origin.y + aRows) * T);
         ctx.stroke();
       }
-      for (let gy = 0; gy <= SHARED_ALLEY_ROWS; gy++) {
+      for (let gy = 0; gy <= aRows; gy++) {
         ctx.beginPath();
         ctx.moveTo(origin.x * T, (origin.y + gy) * T);
-        ctx.lineTo((origin.x + SHARED_ALLEY_COLS) * T, (origin.y + gy) * T);
+        ctx.lineTo((origin.x + aCols) * T, (origin.y + gy) * T);
         ctx.stroke();
       }
 
       ctx.strokeStyle = `rgba(${color},0.65)`;
       ctx.lineWidth = 2;
-      ctx.strokeRect(origin.x * T, origin.y * T, SHARED_ALLEY_COLS * T, SHARED_ALLEY_ROWS * T);
+      ctx.strokeRect(origin.x * T, origin.y * T, aCols * T, aRows * T);
 
       ctx.fillStyle = `rgba(${color},0.8)`;
       ctx.font = 'bold 9px monospace';
       const isBottom = team === Team.Bottom;
-      const ly = isBottom ? (origin.y + SHARED_ALLEY_ROWS + 1.2) * T : (origin.y - 0.4) * T;
+      const ly = isBottom ? (origin.y + aRows + 1.2) * T : (origin.y - 0.4) * T;
       ctx.fillText('TOWER ALLEY', origin.x * T, ly);
     }
   }
@@ -1010,6 +1012,7 @@ export class Renderer {
 
     // Units — sort by current y
     for (const u of state.units) {
+      if (u.hp <= 0) continue;
       const sortY = u.y * T;
       items.push({ y: sortY, draw: () => this.drawOneUnit(ctx, state, u) });
     }
