@@ -22,6 +22,8 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 20
 
       - uses: actions/setup-node@v4
         with:
@@ -45,37 +47,24 @@ jobs:
         if: success()
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          AUTHOR: ${{ github.actor }}
+          DEPLOY_URL: ${{ steps.deployment.outputs.page_url }}
+        shell: bash
         run: |
-          REPO="${{ github.repository }}"
-          SHA="${{ github.sha }}"
           SHORT_SHA="${SHA:0:7}"
-          AUTHOR="${{ github.actor }}"
-          URL="${{ steps.deployment.outputs.page_url }}"
-
-          # Build commit list with real newlines
-          DESC="**Recent changes:**"
-          while IFS= read -r line; do
+          DESCFILE=$(mktemp)
+          echo "**Recent changes:**" > "$DESCFILE"
+          git log --oneline -10 --no-decorate | while IFS= read -r line; do
             HASH=$(echo "$line" | cut -d' ' -f1)
             MSG=$(echo "$line" | cut -d' ' -f2-)
-            DESC="$DESC
-• [\`$HASH\`](https://github.com/$REPO/commit/$HASH) $MSG"
-          done <<< "$(git log --oneline -10 --no-decorate)"
-
-          # Use --rawfile so jq preserves real newlines
-          echo "$DESC" > /tmp/desc.txt
+            echo "- [$HASH](https://github.com/$REPO/commit/$HASH) $MSG" >> "$DESCFILE"
+          done
           PAYLOAD=$(jq -n \
-            --rawfile desc /tmp/desc.txt \
-            --arg title "🚀 Spawn Wars Deployed" \
-            --arg url "$URL" \
-            --arg footer "Deployed by $AUTHOR • $SHORT_SHA" \
-            '{
-              embeds: [{
-                title: $title,
-                description: ($desc | rtrimstr("\n")),
-                url: $url,
-                color: 5763719,
-                footer: { text: $footer }
-              }]
-            }')
-
+            --rawfile desc "$DESCFILE" \
+            --arg title "Spawn Wars Deployed" \
+            --arg url "$DEPLOY_URL" \
+            --arg footer "Deployed by $AUTHOR" \
+            '{embeds: [{title: $title, description: ($desc | rtrimstr("\n")), url: $url, color: 5763719, footer: {text: $footer}}]}')
           curl -s -H "Content-Type: application/json" -d "$PAYLOAD" "$DISCORD_WEBHOOK"
