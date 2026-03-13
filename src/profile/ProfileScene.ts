@@ -1,8 +1,8 @@
 import { Scene, SceneManager } from '../scenes/Scene';
 import { UIAssets } from '../rendering/UIAssets';
 import { SpriteLoader, drawSpriteFrame, getSpriteFrame } from '../rendering/SpriteLoader';
-import { Race } from '../simulation/types';
-import { RACE_COLORS } from '../simulation/data';
+import { Race, BuildingType } from '../simulation/types';
+import { RACE_COLORS, UNIT_STATS, UPGRADE_TREES } from '../simulation/data';
 import {
   PlayerProfile, loadProfile, saveProfile,
   ACHIEVEMENTS, ALL_AVATARS,
@@ -18,6 +18,21 @@ const RACE_LABELS: Record<Race, string> = {
   [Race.Oozlings]: 'Oozlings', [Race.Demon]: 'Demon', [Race.Deep]: 'Deep',
   [Race.Wild]: 'Wild', [Race.Geists]: 'Geists', [Race.Tenders]: 'Tenders',
 };
+
+const CAT_TO_BUILDING: Record<string, BuildingType> = {
+  melee: BuildingType.MeleeSpawner,
+  ranged: BuildingType.RangedSpawner,
+  caster: BuildingType.CasterSpawner,
+};
+
+function getAvatarUnitName(race: Race, category: string, upgradeNode?: string): string {
+  const bt = CAT_TO_BUILDING[category];
+  if (upgradeNode) {
+    const tree = UPGRADE_TREES[race]?.[bt] as Record<string, any> | undefined;
+    if (tree?.[upgradeNode]) return tree[upgradeNode].name;
+  }
+  return UNIT_STATS[race]?.[bt]?.name ?? `${race} ${category}`;
+}
 
 type Tab = 'stats' | 'achievements' | 'avatars';
 
@@ -530,8 +545,8 @@ export class ProfileScene implements Scene {
       ctx.font = `${compact ? 9 : 14}px monospace`;
       ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
       ctx.fillStyle = unlocked ? (rc?.primary ?? '#aaa') : '#444';
-      const catLabel = avatar.category === 'melee' ? 'M' : avatar.category === 'ranged' ? 'R' : 'C';
-      ctx.fillText(`${RACE_LABELS[avatar.race]} ${catLabel}`, ax + cellSize / 2, ay + cellSize - (compact ? 6 : 14));
+      const unitName = getAvatarUnitName(avatar.race, avatar.category, avatar.upgradeNode);
+      ctx.fillText(unitName, ax + cellSize / 2, ay + cellSize - (compact ? 6 : 14));
     }
 
     // Total content height for scroll clamping
