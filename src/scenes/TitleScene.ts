@@ -644,6 +644,7 @@ export class TitleScene implements Scene {
   private sprites: SpriteLoader;
   private pulseTime = 0;
   private clickHandler: ((e: MouseEvent) => void) | null = null;
+  private contextMenuHandler: ((e: MouseEvent) => void) | null = null;
   private touchHandler: ((e: TouchEvent) => void) | null = null;
   private keyHandler: ((e: KeyboardEvent) => void) | null = null;
 
@@ -779,6 +780,28 @@ export class TitleScene implements Scene {
       const cy = e.clientY - rect.top;
       this.handleClick(cx, cy);
     };
+    this.contextMenuHandler = (e: MouseEvent) => {
+      // Right-click on own race slot → cycle backwards
+      if (!this.partyState && !this.localSetup) return;
+      const rect = this.canvas.getBoundingClientRect();
+      const cx = e.clientX - rect.left;
+      const cy = e.clientY - rect.top;
+      if (this.partyState && this.party) {
+        const pl = this.getPartyLayout();
+        const localSlot = this.party.localSlotIndex;
+        if (pl.slotRects[localSlot] && this.hitRect(cx, cy, pl.slotRects[localSlot])) {
+          e.preventDefault();
+          this.cycleRace(-1);
+        }
+      } else if (this.localSetup) {
+        const pl = this.getLocalSetupLayout();
+        const ps = this.localSetup.playerSlot;
+        if (pl.slotRects[ps] && this.hitRect(cx, cy, pl.slotRects[ps])) {
+          e.preventDefault();
+          this.cycleRace(-1);
+        }
+      }
+    };
     this.touchHandler = (e: TouchEvent) => {
       e.preventDefault();
       interactHandler();
@@ -795,6 +818,21 @@ export class TitleScene implements Scene {
         this.settingsOpen = false;
         return;
       }
+      // Ctrl+V paste — works even before join input is active
+      if (e.key === 'v' && (e.ctrlKey || e.metaKey)) {
+        navigator.clipboard?.readText().then(text => {
+          const cleaned = text.trim().replace(/[^a-zA-Z0-9]/g, '').toUpperCase().slice(0, 5);
+          if (cleaned.length >= 4) {
+            this.joinInputActive = true;
+            this.joinCodeInput = cleaned;
+            this.doJoinParty();
+          } else if (cleaned.length > 0) {
+            this.joinInputActive = true;
+            this.joinCodeInput = cleaned;
+          }
+        }).catch(() => {});
+        return;
+      }
       if (this.joinInputActive) {
         if (e.key === 'Escape') { this.joinInputActive = false; this.joinCodeInput = ''; return; }
         if (e.key === 'Backspace') { this.joinCodeInput = this.joinCodeInput.slice(0, -1); return; }
@@ -807,6 +845,7 @@ export class TitleScene implements Scene {
     };
     this.canvas.addEventListener('mousedown', interactHandler, { once: true });
     this.canvas.addEventListener('click', this.clickHandler);
+    this.canvas.addEventListener('contextmenu', this.contextMenuHandler);
     this.canvas.addEventListener('touchstart', this.touchHandler, { passive: false });
     window.addEventListener('keydown', this.keyHandler);
 
@@ -924,12 +963,14 @@ export class TitleScene implements Scene {
 
   exit(): void {
     if (this.clickHandler) this.canvas.removeEventListener('click', this.clickHandler);
+    if (this.contextMenuHandler) this.canvas.removeEventListener('contextmenu', this.contextMenuHandler);
     if (this.touchHandler) this.canvas.removeEventListener('touchstart', this.touchHandler);
     if (this.keyHandler) window.removeEventListener('keydown', this.keyHandler);
     if (this.mouseDownHandler) this.canvas.removeEventListener('mousedown', this.mouseDownHandler);
     if (this.mouseMoveHandler) this.canvas.removeEventListener('mousemove', this.mouseMoveHandler);
     if (this.mouseUpHandler) this.canvas.removeEventListener('mouseup', this.mouseUpHandler);
     this.clickHandler = null;
+    this.contextMenuHandler = null;
     this.touchHandler = null;
     this.keyHandler = null;
     this.mouseDownHandler = null;
@@ -1343,10 +1384,11 @@ export class TitleScene implements Scene {
     try {
       await this.ensureFirebase();
       this.party!.localName = this.playerName;
-      const joined = await this.party!.findAndJoinGame(Race.Crown);
+      const lastRace = this.getLastPartyRace();
+      const joined = await this.party!.findAndJoinGame(lastRace);
       if (!joined) {
         // No open games — create one and wait
-        await this.party!.createParty(Race.Crown);
+        await this.party!.createParty(lastRace);
       }
       // Either joined or created — matchmaking stays true until party gets a guest or game starts
       // If we joined someone's party, matchmaking ends when partyListener fires
@@ -1365,11 +1407,17 @@ export class TitleScene implements Scene {
     }
   }
 
+  private getLastPartyRace(): Race {
+    const saved = localStorage.getItem('spawnwars.lastPartyRace');
+    if (saved && ALL_RACES.includes(saved as Race)) return saved as Race;
+    return Race.Crown;
+  }
+
   private async doCreateParty(): Promise<void> {
     try {
       await this.ensureFirebase();
       this.party!.localName = this.playerName;
-      await this.party!.createParty(Race.Crown);
+      await this.party!.createParty(this.getLastPartyRace());
     } catch (e: any) {
       console.error('[Party] Create failed:', e);
       // Fall back to local setup if Firebase isn't available
@@ -1471,7 +1519,7 @@ export class TitleScene implements Scene {
     try {
       await this.ensureFirebase();
       this.party!.localName = this.playerName;
-      await this.party!.joinParty(this.joinCodeInput, Race.Crown);
+      await this.party!.joinParty(this.joinCodeInput, this.getLastPartyRace());
       this.joinInputActive = false;
       this.joinCodeInput = '';
     } catch (e: any) {
@@ -1480,13 +1528,13 @@ export class TitleScene implements Scene {
     }
   }
 
-  private cycleRace(): void {
+  private cycleRace(dir: number = 1): void {
     // Cycle order: Crown → Horde → ... → Tenders → Random → Crown → ...
     const raceOrder: (Race | 'random')[] = [...ALL_RACES, 'random'];
     if (this.localSetup) {
       const currentRace = this.localSetup.playerRace;
       const idx = raceOrder.indexOf(currentRace);
-      this.localSetup.playerRace = raceOrder[(idx + 1) % raceOrder.length];
+      this.localSetup.playerRace = raceOrder[(idx + dir + raceOrder.length) % raceOrder.length];
       saveLocalSetup(this.localSetup);
       return;
     }
@@ -1495,8 +1543,9 @@ export class TitleScene implements Scene {
     const myPlayer = this.partyState.players[String(localSlot)];
     const currentRace = myPlayer?.race ?? Race.Crown;
     const idx = raceOrder.indexOf(currentRace);
-    const nextRace = raceOrder[(idx + 1) % raceOrder.length];
+    const nextRace = raceOrder[(idx + dir + raceOrder.length) % raceOrder.length];
     this.party.updateRace(nextRace as Race);
+    localStorage.setItem('spawnwars.lastPartyRace', String(nextRace));
   }
 
   private cycleBotRace(slot: number): void {
