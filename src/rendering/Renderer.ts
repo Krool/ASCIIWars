@@ -149,12 +149,14 @@ export class Renderer {
     this.canvas.height = Math.round(window.innerHeight * dpr);
   }
 
-  /** Update facing direction for an entity based on movement. Returns true if facing left. */
+  /** Update facing direction for an entity based on movement. Returns true if facing left.
+   *  Only updates when horizontal movement is significant (> 0.15 tiles/frame) to prevent
+   *  minor path curves from flipping asymmetric sprites. */
   private updateFacing(id: number, x: number, defaultLeft: boolean): boolean {
     const prev = this.prevX.get(id);
     if (prev !== undefined) {
       const dx = x - prev;
-      if (Math.abs(dx) > 0.01) {
+      if (Math.abs(dx) > 0.15) {
         this.facing.set(id, dx < 0);
       }
     }
@@ -1001,7 +1003,7 @@ export class Renderer {
   private drawBuildGrids(ctx: CanvasRenderingContext2D, state: GameState): void {
     const maxP = state.mapDef.maxPlayers;
     for (let p = 0; p < maxP; p++) {
-      const origin = getBuildGridOrigin(p, state.mapDef);
+      const origin = getBuildGridOrigin(p, state.mapDef, state.players);
       const player = state.players[p];
       if (!player || player.isEmpty) continue;
 
@@ -1049,7 +1051,7 @@ export class Renderer {
     for (let p = 0; p < maxP; p++) {
       const player = state.players[p];
       if (!player || player.isEmpty) continue;
-      const origin = getHutGridOrigin(p, state.mapDef);
+      const origin = getHutGridOrigin(p, state.mapDef, state.players);
       const pc = PLAYER_COLORS[p % PLAYER_COLORS.length];
       const tc = hexToRgba(pc);
 
@@ -1125,53 +1127,100 @@ export class Renderer {
 
   // === Y-Sorted Rendering (depth ordering) ===
 
+  // Reusable sort buffer to avoid per-frame allocations (GC pressure)
+  // kind: 0=hq, 1=building, 2=projectile, 3=unit, 4=dead, 5=harvester
+  private sortBuf: { y: number; kind: number; idx: number }[] = [];
+
   private drawYSorted(ctx: CanvasRenderingContext2D, state: GameState): void {
-    // Collect all renderable entities with their sort Y (bottom edge)
-    const items: { y: number; draw: () => void }[] = [];
+    // Viewport culling bounds (world pixels, with sprite margin)
+    const margin = T * 3;
+    const vpX0 = this.camera.x - margin;
+    const vpY0 = this.camera.y - margin;
+    const vpX1 = this.camera.x + this.canvas.clientWidth / this.camera.zoom + margin;
+    const vpY1 = this.camera.y + this.canvas.clientHeight / this.camera.zoom + margin;
 
-    // HQs — sort by bottom edge (pos.y + HQ_HEIGHT)
-    for (const team of [Team.Bottom, Team.Top] as Team[]) {
-      const pos = getHQPosition(team, state.mapDef);
-      const sortY = (pos.y + HQ_HEIGHT) * T;
-      items.push({ y: sortY, draw: () => this.drawOneHQ(ctx, state, team) });
+    // Reuse sort buffer — reset length without reallocating
+    const buf = this.sortBuf;
+    let n = 0;
+
+    // HQs — always draw (only 2)
+    for (let ti = 0; ti < 2; ti++) {
+      const pos = getHQPosition(ti as Team, state.mapDef);
+      const sy = (pos.y + HQ_HEIGHT) * T;
+      if (n < buf.length) { buf[n].y = sy; buf[n].kind = 0; buf[n].idx = ti; }
+      else buf.push({ y: sy, kind: 0, idx: ti });
+      n++;
     }
 
-    // Buildings — sort by bottom of tile
-    for (const b of state.buildings) {
-      const sortY = (b.worldY + 1) * T;
-      items.push({ y: sortY, draw: () => this.drawOneBuilding(ctx, state, b) });
+    // Buildings — cull off-screen
+    for (let i = 0; i < state.buildings.length; i++) {
+      const b = state.buildings[i];
+      const px = b.worldX * T, py = b.worldY * T;
+      if (px < vpX0 || px > vpX1 || py < vpY0 || py > vpY1) continue;
+      const sy = (b.worldY + 1) * T;
+      if (n < buf.length) { buf[n].y = sy; buf[n].kind = 1; buf[n].idx = i; }
+      else buf.push({ y: sy, kind: 1, idx: i });
+      n++;
     }
 
-    // Projectiles — sort by current position
-    for (const p of state.projectiles) {
-      const sortY = p.y * T;
-      items.push({ y: sortY, draw: () => this.drawOneProjectile(ctx, state, p) });
+    // Projectiles — cull off-screen
+    for (let i = 0; i < state.projectiles.length; i++) {
+      const p = state.projectiles[i];
+      const px = p.x * T, py = p.y * T;
+      if (px < vpX0 || px > vpX1 || py < vpY0 || py > vpY1) continue;
+      if (n < buf.length) { buf[n].y = py; buf[n].kind = 2; buf[n].idx = i; }
+      else buf.push({ y: py, kind: 2, idx: i });
+      n++;
     }
 
-    // Units — sort by current y
-    for (const u of state.units) {
+    // Units — cull off-screen
+    for (let i = 0; i < state.units.length; i++) {
+      const u = state.units[i];
       if (u.hp <= 0) continue;
-      const sortY = u.y * T;
-      items.push({ y: sortY, draw: () => this.drawOneUnit(ctx, state, u) });
+      const px = u.x * T, py = u.y * T;
+      if (px < vpX0 || px > vpX1 || py < vpY0 || py > vpY1) continue;
+      if (n < buf.length) { buf[n].y = py; buf[n].kind = 3; buf[n].idx = i; }
+      else buf.push({ y: py, kind: 3, idx: i });
+      n++;
     }
 
-    // Dead units linger briefly so bodies can visibly finish collapsing.
-    for (const dead of this.deadUnits) {
-      items.push({ y: dead.y * T, draw: () => this.drawDeadUnit(ctx, dead) });
+    // Dead units — cull off-screen
+    for (let i = 0; i < this.deadUnits.length; i++) {
+      const d = this.deadUnits[i];
+      const px = d.x * T, py = d.y * T;
+      if (px < vpX0 || px > vpX1 || py < vpY0 || py > vpY1) continue;
+      if (n < buf.length) { buf[n].y = py; buf[n].kind = 4; buf[n].idx = i; }
+      else buf.push({ y: py, kind: 4, idx: i });
+      n++;
     }
 
-    // Harvesters — sort by current y
-    for (const h of state.harvesters) {
+    // Harvesters — cull off-screen
+    for (let i = 0; i < state.harvesters.length; i++) {
+      const h = state.harvesters[i];
       if (h.state === 'dead') continue;
-      const sortY = h.y * T;
-      items.push({ y: sortY, draw: () => this.drawOneHarvester(ctx, state, h) });
+      const px = h.x * T, py = h.y * T;
+      if (px < vpX0 || px > vpX1 || py < vpY0 || py > vpY1) continue;
+      if (n < buf.length) { buf[n].y = py; buf[n].kind = 5; buf[n].idx = i; }
+      else buf.push({ y: py, kind: 5, idx: i });
+      n++;
     }
 
-    // Sort by Y ascending (higher on screen drawn first, lower on screen drawn last / in front)
-    items.sort((a, b) => a.y - b.y);
+    // Sort only the active portion by Y ascending
+    const active = buf.length > n ? buf.slice(0, n) : buf;
+    if (buf.length > n) buf.length = n; // trim excess from prior frames
+    active.sort((a, b) => a.y - b.y);
 
-    for (const item of items) {
-      item.draw();
+    // Dispatch draws without closures
+    for (let i = 0; i < n; i++) {
+      const item = active[i];
+      switch (item.kind) {
+        case 0: this.drawOneHQ(ctx, state, item.idx as Team); break;
+        case 1: this.drawOneBuilding(ctx, state, state.buildings[item.idx]); break;
+        case 2: this.drawOneProjectile(ctx, state, state.projectiles[item.idx]); break;
+        case 3: this.drawOneUnit(ctx, state, state.units[item.idx]); break;
+        case 4: this.drawDeadUnit(ctx, this.deadUnits[item.idx]); break;
+        case 5: this.drawOneHarvester(ctx, state, state.harvesters[item.idx]); break;
+      }
     }
   }
 
@@ -1215,7 +1264,8 @@ export class Renderer {
 
     // Tip-over with ease-out
     const fallEased = 1 - (1 - fallPhase) * (1 - fallPhase);
-    const rotation = (dead.faceLeft ? -1 : 1) * fallEased * 1.4;
+    const deadFlip = dead.faceLeft; // rotation dir based on movement facing
+    const rotation = (deadFlip ? -1 : 1) * fallEased * 1.4;
     const flatten = 1 - fallEased * 0.72;
 
     ctx.save();
@@ -1240,17 +1290,19 @@ export class Renderer {
       const drawW = baseH * aspect;
       const drawH = baseH * (def.heightScale ?? 1.0);
       const groundY = def.groundY ?? 0.71;
+      const drawFaceLeft = dead.faceLeft;
 
       ctx.translate(cx, feetY + popY);
       ctx.rotate(rotation);
-      ctx.scale(dead.faceLeft ? -1 : 1, flatten);
+      ctx.scale(drawFaceLeft ? -1 : 1, flatten);
 
-      drawSpriteFrame(ctx, img, def, dead.frame, -drawW / 2, -drawH * groundY, drawW, drawH);
+      const deadAx = def.anchorX ?? 0.5;
+      drawSpriteFrame(ctx, img, def, dead.frame, -drawW * deadAx, -drawH * groundY, drawW, drawH);
       // Bright flash overlay during initial hit reaction (same as hit flash style)
       if (flashPhase < 1) {
         ctx.globalAlpha = (1 - flashPhase) * 0.55;
         ctx.globalCompositeOperation = 'lighter';
-        drawSpriteFrame(ctx, img, def, dead.frame, -drawW / 2, -drawH * groundY, drawW, drawH);
+        drawSpriteFrame(ctx, img, def, dead.frame, -drawW * deadAx, -drawH * groundY, drawW, drawH);
         ctx.globalCompositeOperation = 'source-over';
       }
     } else {
@@ -1573,22 +1625,14 @@ export class Renderer {
     }
     const px = p.x * T + T / 2, py = p.y * T + pyOffset;
 
-    // Determine projectile type: caster AoE (speed 10), tower (speed 12), chain (speed 18/20), ranged (speed 15)
-    const isCasterProj = p.speed <= 10 && p.aoeRadius >= 3;
-    const isTowerProj = p.speed === 12 || p.speed === 18;
-    const isRangedProj = !isCasterProj && !isTowerProj;
-
     // Animation frame — loop through the bright middle portion of the lifecycle
     // Orbs: 30 frames, circles: 48 frames. Frames ~5-15 are the brightest.
     const animFrame = 5 + Math.floor(state.tick / 2) % 10;
 
-    // Crown ranged gets arrow sprite; everyone else gets orbs
-    const usesArrow = race === Race.Crown && isRangedProj;
-
     let drewSprite = false;
 
-    if (usesArrow) {
-      // Arrow sprite — rotate toward target
+    if (p.visual === 'arrow') {
+      // Arrow sprite — rotate toward target (all ranged units)
       const arrowData = this.sprites.getArrowSprite(teamIdx);
       if (arrowData) {
         const [img] = arrowData;
@@ -1604,21 +1648,52 @@ export class Renderer {
         ctx.restore();
         drewSprite = true;
       }
-    } else if (isCasterProj && race != null) {
+    } else if (p.visual === 'bone') {
+      // Bone projectile — rotate toward target, use first frame of spritesheet
+      const boneData = this.sprites.getBoneSprite();
+      if (boneData) {
+        const [img] = boneData;
+        const target = state.units.find(u => u.id === p.targetId);
+        const angle = target
+          ? Math.atan2((target.y - p.y), (target.x - p.x))
+          : isBottom ? -Math.PI / 2 : Math.PI / 2;
+        // Spin the bone as it flies (add rotation over time)
+        const spin = (state.tick * 0.4) % (Math.PI * 2);
+        const size = T * 1.0;
+        ctx.save();
+        ctx.translate(px, py);
+        ctx.rotate(angle + spin);
+        ctx.drawImage(img, 0, 0, 64, 64, -size / 2, -size / 2, size, size);
+        ctx.restore();
+        drewSprite = true;
+      }
+    } else if (p.visual === 'circle') {
       // Caster AoE — use circle sprite (bigger, more dramatic)
-      const circData = this.sprites.getCircleSprite(race);
+      const circRace = race ?? Race.Crown;
+      const circData = this.sprites.getCircleSprite(circRace);
       if (circData) {
         const [img, def] = circData;
         const size = T * 1.6;
         drawGridFrame(ctx, img, def, animFrame, px - size / 2, py - size / 2, size, size);
         drewSprite = true;
       }
-    } else if (race != null) {
-      // Ranged or tower — use orb sprite
-      const orbData = this.sprites.getOrbSprite(race);
+    } else if (p.visual === 'bolt') {
+      // Tower / HQ bolt — use orb sprite, slightly larger
+      const boltRace = race ?? Race.Crown;
+      const orbData = this.sprites.getOrbSprite(boltRace);
       if (orbData) {
         const [img, def] = orbData;
-        const size = isTowerProj ? T * 1.2 : T * 1.0;
+        const size = T * 1.2;
+        drawGridFrame(ctx, img, def, animFrame, px - size / 2, py - size / 2, size, size);
+        drewSprite = true;
+      }
+    } else if (p.visual === 'orb') {
+      // Chain / misc — use orb sprite, standard size
+      const orbRace = race ?? Race.Crown;
+      const orbData = this.sprites.getOrbSprite(orbRace);
+      if (orbData) {
+        const [img, def] = orbData;
+        const size = T * 1.0;
         drawGridFrame(ctx, img, def, animFrame, px - size / 2, py - size / 2, size, size);
         drewSprite = true;
       }
@@ -1646,24 +1721,32 @@ export class Renderer {
       const laneColor = u.lane === Lane.Left ? LANE_LEFT_COLOR : LANE_RIGHT_COLOR;
       const r = u.range > 2 ? 3 : 4;
 
-      // Drop shadow — moves with day/night sun angle
+      // Drop shadow — simple oval (cheaper than ellipse path)
       const cx = px + T / 2;
       const cy = py + T / 2;
-      const shadowLen = this.dayNight.shadowLength;
-      const shadowOffX = Math.cos(this.dayNight.shadowAngle) * shadowLen * 3;
-      const shadowOffY = Math.sin(this.dayNight.shadowAngle) * shadowLen * 1.5 + 3;
-      const shadowAlpha = this.dayNight.brightness * 0.25;
+      const shadowAlpha = this.dayNight.brightness * 0.2;
       ctx.fillStyle = `rgba(0,0,0,${shadowAlpha})`;
-      ctx.beginPath();
-      ctx.ellipse(cx + shadowOffX, cy + shadowOffY, 5 + shadowLen, 2.5 + shadowLen * 0.3, 0, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.fillRect(cx - 5, cy + 3, 10, 3);
+
+      // Champion glow aura
+      if (u.isChampion) {
+        const glowPulse = 0.5 + 0.5 * Math.sin(state.tick * 0.15);
+        const glowR = T * 1.2 + glowPulse * T * 0.3;
+        ctx.save();
+        ctx.globalAlpha = 0.25 + glowPulse * 0.15;
+        ctx.fillStyle = '#00ffff';
+        ctx.beginPath();
+        ctx.arc(cx, py + T * 0.5, glowR, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
 
       // Try sprite first, fall back to procedural shapes
       const race = state.players[u.playerId]?.race;
       const cat = u.category as 'melee' | 'ranged' | 'caster';
       const isAttacking = u.targetId !== null && u.attackTimer <= u.attackSpeed * 0.5;
       const spriteData = race ? this.sprites.getUnitSprite(race, cat, u.playerId, isAttacking, u.upgradeNode) : null;
-      const tierScale = 1.0 + (u.upgradeTier ?? 0) * 0.15; // 1.0 / 1.15 / 1.3
+      const tierScale = u.isChampion ? 3.0 : 1.0 + (u.upgradeTier ?? 0) * 0.15; // champions are 3x size
       if (spriteData) {
         const [img, def] = spriteData;
         const spriteScale = def.scale ?? 1.0;
@@ -1685,19 +1768,26 @@ export class Renderer {
         if (u.targetId !== null) {
           const target = state.units.find(t => t.id === u.targetId);
           if (target) {
-            faceLeft = target.x < u.x;
+            const dx = target.x - u.x;
+            if (Math.abs(dx) > 0.5) {
+              // Target has meaningful horizontal offset — face toward it
+              faceLeft = dx < 0;
+            } else {
+              // Target is mostly vertical — use team default facing
+              faceLeft = u.team === Team.Top;
+            }
             this.facing.set(u.id, faceLeft);
           }
         }
-
+        const ax = def.anchorX ?? 0.5;
         if (faceLeft) {
           ctx.save();
           ctx.translate(cx, 0);
           ctx.scale(-1, 1);
-          drawSpriteFrame(ctx, img, def, frame, -drawW / 2, drawY, drawW, drawH);
+          drawSpriteFrame(ctx, img, def, frame, -drawW * (1 - ax), drawY, drawW, drawH);
           ctx.restore();
         } else {
-          drawSpriteFrame(ctx, img, def, frame, cx - drawW / 2, drawY, drawW, drawH);
+          drawSpriteFrame(ctx, img, def, frame, cx - drawW * ax, drawY, drawW, drawH);
         }
         // Hit flash: bright white tint when taking damage
         if (this.hitFlash.consume(u.id)) {
@@ -1707,30 +1797,19 @@ export class Renderer {
             ctx.save();
             ctx.translate(cx, 0);
             ctx.scale(-1, 1);
-            drawSpriteFrame(ctx, img, def, frame, -drawW / 2, drawY, drawW, drawH);
+            drawSpriteFrame(ctx, img, def, frame, -drawW * (1 - ax), drawY, drawW, drawH);
             ctx.restore();
           } else {
-            drawSpriteFrame(ctx, img, def, frame, cx - drawW / 2, drawY, drawW, drawH);
+            drawSpriteFrame(ctx, img, def, frame, cx - drawW * ax, drawY, drawW, drawH);
           }
           ctx.globalCompositeOperation = 'source-over';
           ctx.globalAlpha = 1;
         }
-        // Tier glow: subtle additive overlay for upgraded units
+        // Tier indicator: small colored dot above unit (cheap alternative to full sprite redraw)
         const tier = u.upgradeTier ?? 0;
         if (tier >= 1) {
-          ctx.globalAlpha = 0.12 + tier * 0.06;
-          ctx.globalCompositeOperation = 'lighter';
-          if (faceLeft) {
-            ctx.save();
-            ctx.translate(cx, 0);
-            ctx.scale(-1, 1);
-            drawSpriteFrame(ctx, img, def, frame, -drawW / 2, drawY, drawW, drawH);
-            ctx.restore();
-          } else {
-            drawSpriteFrame(ctx, img, def, frame, cx - drawW / 2, drawY, drawW, drawH);
-          }
-          ctx.globalCompositeOperation = 'source-over';
-          ctx.globalAlpha = 1;
+          ctx.fillStyle = tier >= 2 ? '#ffd740' : '#90caf9';
+          ctx.fillRect(cx - 1, drawY - 2, 2 + tier, 2);
         }
       } else {
         // Procedural fallback: scale by tier
@@ -1748,11 +1827,9 @@ export class Renderer {
           ctx.globalAlpha = 1;
         }
       }
-      // Lane indicator above head: < for left, > for right
-      ctx.font = 'bold 8px monospace';
-      ctx.textAlign = 'center';
+      // Lane indicator: small colored tick (cheaper than fillText per unit)
       ctx.fillStyle = laneColor;
-      ctx.fillText(u.lane === Lane.Left ? '<' : '>', px + T / 2, py - 1);
+      ctx.fillRect(cx - 1, py - 2, 2, 2);
 
       // Unit center for effects (tile-centered)
       const ux = px + T / 2, uy = py + T / 2;
@@ -1801,8 +1878,8 @@ export class Renderer {
         }
       }
 
-      // HP bar (only if damaged) — smooth drain with gradient
-      if (u.hp < u.maxHp) {
+      // HP bar (only if damaged, always for champions) — smooth drain with gradient
+      if (u.hp < u.maxHp || u.isChampion) {
         const barW = 12, barH = 2.5;
         const barX = ux - barW / 2, barY = py - 1;
         const targetPct = u.hp / u.maxHp;
@@ -1813,19 +1890,11 @@ export class Renderer {
 
         ctx.fillStyle = '#111';
         ctx.fillRect(barX - 0.5, barY - 0.5, barW + 1, barH + 1);
-        // Gradient fill green -> yellow -> red
-        const grad = ctx.createLinearGradient(barX, barY, barX + barW * displayPct, barY);
-        if (displayPct > 0.5) {
-          grad.addColorStop(0, '#4caf50');
-          grad.addColorStop(1, '#8bc34a');
-        } else if (displayPct > 0.25) {
-          grad.addColorStop(0, '#ff9800');
-          grad.addColorStop(1, '#ffc107');
-        } else {
-          grad.addColorStop(0, '#f44336');
-          grad.addColorStop(1, '#ff5722');
-        }
-        ctx.fillStyle = grad;
+        // Flat color fill (avoids expensive per-unit gradient creation)
+        ctx.fillStyle = u.isChampion ? '#00e5ff'
+          : displayPct > 0.5 ? '#66bb6a'
+          : displayPct > 0.25 ? '#ffa726'
+          : '#ef5350';
         ctx.fillRect(barX, barY, barW * displayPct, barH);
         // Delayed damage indicator (red ghost bar)
         if (displayPct > targetPct + 0.01) {
@@ -2320,6 +2389,29 @@ export class Renderer {
     const d = state.diamond;
     if (d.state === 'carried') return;
 
+    // Respawning: show a faded timer at center
+    if (d.state === 'respawning') {
+      const px = d.x * T + T / 2;
+      const py = d.y * T + T / 2;
+      const secs = Math.ceil(d.respawnTimer / 20);
+      ctx.save();
+      ctx.globalAlpha = 0.4 + 0.2 * Math.sin(Date.now() / 500);
+      ctx.beginPath();
+      ctx.arc(px, py, 14, 0, Math.PI * 2);
+      ctx.strokeStyle = '#00ffff';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([4, 4]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.font = 'bold 10px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#00ffff';
+      ctx.fillText(`${secs}s`, px, py + 4);
+      ctx.textAlign = 'start';
+      ctx.restore();
+      return;
+    }
+
     const px = d.x * T + T / 2;
     const py = d.y * T + T / 2;
     const size = 10;
@@ -2347,7 +2439,7 @@ export class Renderer {
 
       ctx.font = 'bold 10px monospace';
       ctx.textAlign = 'center';
-      const labelText = 'MINE CENTER TO EXPOSE DIAMOND';
+      const labelText = 'MINE TO UNLOCK CHAMPION';
       const labelY = py - r - 10;
       const labelW = ctx.measureText(labelText).width;
       // Dark background pill for readability
@@ -2364,9 +2456,11 @@ export class Renderer {
       return;
     }
 
-    ctx.save();
-    ctx.shadowColor = '#ffffff';
-    ctx.shadowBlur = 14 * pulse;
+    // Glow ring (cheap replacement for expensive shadowBlur)
+    ctx.fillStyle = `rgba(255, 255, 255, ${0.15 * pulse})`;
+    ctx.beginPath();
+    ctx.arc(px, py, size * 2, 0, Math.PI * 2);
+    ctx.fill();
 
     ctx.beginPath();
     ctx.moveTo(px, py - size); ctx.lineTo(px + size, py);
@@ -2377,12 +2471,11 @@ export class Renderer {
     ctx.strokeStyle = '#e0e0e0';
     ctx.lineWidth = 1.5;
     ctx.stroke();
-    ctx.restore();
 
     ctx.fillStyle = '#fff';
     ctx.font = 'bold 9px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText('DIAMOND', px, py + size + 12);
+    ctx.fillText('CHAMPION', px, py + size + 12);
     ctx.textAlign = 'start';
   }
 
@@ -2391,8 +2484,8 @@ export class Renderer {
   private drawTowerAttackLines(ctx: CanvasRenderingContext2D, state: GameState): void {
     ctx.lineWidth = 0.5;
     for (const p of state.projectiles) {
-      // Draw for tower projectiles (speed 12) and chain projectiles (speed 18)
-      if (p.speed !== 12 && p.speed !== 18) continue;
+      // Draw faint lines for tower/HQ bolts only
+      if (p.visual !== 'bolt') continue;
       const target = state.units.find(u => u.id === p.targetId);
       if (!target) continue;
       const race = state.players[p.sourcePlayerId]?.race;

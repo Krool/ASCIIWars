@@ -153,6 +153,7 @@ export interface PlayerSlotDef {
   teamIndex: number;           // which team (0 or 1) this player belongs to
   buildGridOrigin: Vec2;       // top-left of BUILD_GRID (14×3) in world tiles
   hutGridOrigin: Vec2;         // top-left of HUT_GRID (10×1) in world tiles
+  defaultLane?: Lane;          // override default lane assignment (top/bot); falls back to posInTeam % 2
 }
 
 /** Per-team shared layout */
@@ -203,6 +204,8 @@ export interface MapDef {
   getPlayableRange(axisPos: number): { min: number; max: number };
   /** Which axis the shape varies along: 'y' for portrait maps, 'x' for landscape */
   shapeAxis: 'y' | 'x';
+  /** Multiplier for wood/stone harvester deposits. Default 1. */
+  resourceYield?: number;
 }
 
 // === Enums ===
@@ -335,6 +338,8 @@ export interface UnitState {
   kills: number;          // individual kill count for war hero tracking
   lastDamagedByName: string; // name of last unit/source that dealt damage
   spawnTick: number;      // tick when unit was created
+  nukeImmune?: boolean;   // diamond champion — immune to nuke damage
+  isChampion?: boolean;   // diamond champion flag (for rendering/targeting)
 }
 
 // Snapshot of a notable unit for post-match display
@@ -394,11 +399,15 @@ export interface DiamondState {
   x: number;
   y: number;
   exposed: boolean; // true once a path to center is cleared
-  state: 'hidden' | 'exposed' | 'being_mined' | 'carried' | 'dropped';
+  state: 'hidden' | 'exposed' | 'being_mined' | 'carried' | 'dropped' | 'respawning';
   carrierId: number | null;
   carrierType: 'unit' | 'harvester' | null;
   mineProgress: number; // 0-1
+  respawnTimer: number; // ticks until diamond reappears after delivery
+  deliveries: number;   // how many times diamond has been delivered (champion gets stronger)
 }
+
+export type ProjectileVisual = 'arrow' | 'orb' | 'circle' | 'bolt' | 'bone';
 
 export interface ProjectileState {
   id: number;
@@ -409,6 +418,7 @@ export interface ProjectileState {
   speed: number;
   aoeRadius: number;
   team: Team;
+  visual: ProjectileVisual;         // determines sprite: arrow, orb, circle (AoE), bolt (HQ/tower)
   sourcePlayerId: number; // tracks which player fired it for race-specific effects
   sourceUnitId?: number;  // tracks which unit fired it for kill credit
   extraBurnStacks?: number;

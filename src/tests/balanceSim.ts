@@ -1,6 +1,7 @@
 import { createInitialState, simulateTick } from '../simulation/GameState';
-import { GameCommand, Race, Team, TICK_RATE } from '../simulation/types';
+import { GameCommand, Race, Team, TICK_RATE, MapDef } from '../simulation/types';
 import { runAllBotAI, createBotContext, BotDifficultyLevel } from '../simulation/BotAI';
+import { DUEL_MAP, SKIRMISH_MAP, WARZONE_MAP } from '../simulation/maps';
 
 // ==================== CONFIG ====================
 
@@ -8,17 +9,34 @@ const DEFAULT_MATCHES_PER_MATCHUP = 3;
 const MAX_MATCH_TICKS = 8 * 60 * TICK_RATE; // 8 min hard cap
 const ALL_RACES = [Race.Crown, Race.Horde, Race.Goblins, Race.Oozlings, Race.Demon, Race.Deep, Race.Wild, Race.Geists, Race.Tenders];
 
+// Map presets: maps + how many active players per team
+interface MapPreset {
+  mapDef: MapDef;
+  playersPerTeam: number;
+  label: string;
+}
+
+const MAP_PRESETS: Record<string, MapPreset> = {
+  '1v1':      { mapDef: DUEL_MAP,     playersPerTeam: 1, label: '1v1 (Duel map)' },
+  '2v2':      { mapDef: DUEL_MAP,     playersPerTeam: 2, label: '2v2 (Duel map)' },
+  'duel':     { mapDef: DUEL_MAP,     playersPerTeam: 2, label: '2v2 (Duel map)' },
+  '3v3':      { mapDef: SKIRMISH_MAP, playersPerTeam: 3, label: '3v3 (Skirmish map)' },
+  'skirmish': { mapDef: SKIRMISH_MAP, playersPerTeam: 3, label: '3v3 (Skirmish map)' },
+  '4v4':      { mapDef: WARZONE_MAP,  playersPerTeam: 4, label: '4v4 (Warzone map)' },
+  'warzone':  { mapDef: WARZONE_MAP,  playersPerTeam: 4, label: '4v4 (Warzone map)' },
+};
+
 // ==================== TYPES ====================
 
 interface MatchResult {
-  bottomRaces: [Race, Race];
-  topRaces: [Race, Race];
+  teamRaces: [Race[], Race[]];  // [team0 races, team1 races]
   winner: 'bottom' | 'top' | 'draw';
   winCondition: string;
   durationTicks: number;
   perPlayer: {
     race: Race;
     team: string;
+    isEmpty: boolean;
     damageDealt: number;
     unitsSpawned: number;
     unitsLost: number;
@@ -34,15 +52,31 @@ interface MatchResult {
 // ==================== HEADLESS MATCH ====================
 
 function runHeadlessMatch(
-  p0Race: Race, p1Race: Race, p2Race: Race, p3Race: Race,
+  team0Races: Race[], team1Races: Race[],
+  mapDef: MapDef,
   difficulty: BotDifficultyLevel = BotDifficultyLevel.Medium,
 ): MatchResult {
-  const state = createInitialState([
-    { race: p0Race, isBot: true },
-    { race: p1Race, isBot: true },
-    { race: p2Race, isBot: true },
-    { race: p3Race, isBot: true },
-  ]);
+  const ppt = mapDef.playersPerTeam;
+  const players: { race: Race; isBot: boolean; isEmpty?: boolean }[] = [];
+
+  // Fill team 0 slots
+  for (let i = 0; i < ppt; i++) {
+    if (i < team0Races.length) {
+      players.push({ race: team0Races[i], isBot: true });
+    } else {
+      players.push({ race: Race.Crown, isBot: true, isEmpty: true });
+    }
+  }
+  // Fill team 1 slots
+  for (let i = 0; i < ppt; i++) {
+    if (i < team1Races.length) {
+      players.push({ race: team1Races[i], isBot: true });
+    } else {
+      players.push({ race: Race.Crown, isBot: true, isEmpty: true });
+    }
+  }
+
+  const state = createInitialState(players, undefined, mapDef);
 
   const botCtx = createBotContext(difficulty);
   const commands: GameCommand[] = [];
@@ -58,8 +92,7 @@ function runHeadlessMatch(
     : state.winner === Team.Top ? 'top' : 'draw';
 
   return {
-    bottomRaces: [p0Race, p1Race],
-    topRaces: [p2Race, p3Race],
+    teamRaces: [team0Races, team1Races],
     winner,
     winCondition: state.winCondition ?? 'timeout',
     durationTicks: state.tick,
@@ -68,6 +101,7 @@ function runHeadlessMatch(
       return {
         race: p.race,
         team: p.team === Team.Bottom ? 'bottom' : 'top',
+        isEmpty: p.isEmpty,
         damageDealt: s.totalDamageDealt,
         unitsSpawned: s.unitsSpawned,
         unitsLost: s.unitsLost,
@@ -85,23 +119,30 @@ function runHeadlessMatch(
 // ==================== MATCHUP GENERATION ====================
 
 interface Matchup {
-  bottom: [Race, Race];
-  top: [Race, Race];
+  team0: Race[];
+  team1: Race[];
 }
 
-/** Mirror-team round robin: Race A+A vs Race B+B for all pairs */
-function generateMirrorMatchups(races: Race[]): Matchup[] {
+/** Mirror-team round robin: all slots on a team share the same race */
+function generateMirrorMatchups(races: Race[], teamSize: number): Matchup[] {
   const matchups: Matchup[] = [];
   for (let i = 0; i < races.length; i++) {
     for (let j = i + 1; j < races.length; j++) {
-      matchups.push({ bottom: [races[i], races[i]], top: [races[j], races[j]] });
+      matchups.push({
+        team0: Array(teamSize).fill(races[i]),
+        team1: Array(teamSize).fill(races[j]),
+      });
     }
   }
   return matchups;
 }
 
-/** Mixed-team: each team has two different races, tests synergies */
-function generateMixedMatchups(races: Race[]): Matchup[] {
+/** Mixed-team (2-player teams only): each team has two different races */
+function generateMixedMatchups(races: Race[], teamSize: number): Matchup[] {
+  if (teamSize !== 2) {
+    console.log('  Warning: --mixed only supports 2-player teams, falling back to mirror');
+    return generateMirrorMatchups(races, teamSize);
+  }
   const teamPairs: [Race, Race][] = [];
   for (let i = 0; i < races.length; i++) {
     for (let j = i + 1; j < races.length; j++) {
@@ -111,14 +152,18 @@ function generateMixedMatchups(races: Race[]): Matchup[] {
   const matchups: Matchup[] = [];
   for (let i = 0; i < teamPairs.length; i++) {
     for (let j = i; j < teamPairs.length; j++) {
-      matchups.push({ bottom: teamPairs[i], top: teamPairs[j] });
+      matchups.push({ team0: [...teamPairs[i]], team1: [...teamPairs[j]] });
     }
   }
   return matchups;
 }
 
-/** Full exhaustive: all pair-vs-pair including mirrors */
-function generateFullMatchups(races: Race[]): Matchup[] {
+/** Full exhaustive (2-player teams only): all pair-vs-pair including mirrors */
+function generateFullMatchups(races: Race[], teamSize: number): Matchup[] {
+  if (teamSize !== 2) {
+    console.log('  Warning: --full only supports 2-player teams, falling back to mirror');
+    return generateMirrorMatchups(races, teamSize);
+  }
   const teamPairs: [Race, Race][] = [];
   for (let i = 0; i < races.length; i++) {
     for (let j = i; j < races.length; j++) {
@@ -128,7 +173,7 @@ function generateFullMatchups(races: Race[]): Matchup[] {
   const matchups: Matchup[] = [];
   for (let i = 0; i < teamPairs.length; i++) {
     for (let j = i; j < teamPairs.length; j++) {
-      matchups.push({ bottom: teamPairs[i], top: teamPairs[j] });
+      matchups.push({ team0: [...teamPairs[i]], team1: [...teamPairs[j]] });
     }
   }
   return matchups;
@@ -170,7 +215,10 @@ function aggregate(results: MatchResult[]) {
   const synergyGrid: Record<string, Record<string, SynergyRecord>> = {};
 
   for (const r of results) {
-    for (const p of r.perPlayer) {
+    // Skip empty players in aggregation
+    const activePlayers = r.perPlayer.filter(p => !p.isEmpty);
+
+    for (const p of activePlayers) {
       if (!raceStats[p.race]) {
         raceStats[p.race] = {
           wins: 0, losses: 0, draws: 0, totalDamage: 0,
@@ -197,8 +245,8 @@ function aggregate(results: MatchResult[]) {
     }
 
     // Cross-team matchup tracking
-    const bottomPlayers = r.perPlayer.filter(p => p.team === 'bottom');
-    const topPlayers = r.perPlayer.filter(p => p.team === 'top');
+    const bottomPlayers = activePlayers.filter(p => p.team === 'bottom');
+    const topPlayers = activePlayers.filter(p => p.team === 'top');
     for (const bp of bottomPlayers) {
       for (const tp of topPlayers) {
         if (!matchupGrid[bp.race]) matchupGrid[bp.race] = {};
@@ -255,7 +303,7 @@ function winPctColor(pct: number): string {
   return '  ';                  // balanced
 }
 
-function printResults(results: MatchResult[], raceFilter?: Race): void {
+function printResults(results: MatchResult[], mapLabel: string, raceFilter?: Race): void {
   const { raceStats, matchupGrid, synergyGrid } = aggregate(results);
   const races = ALL_RACES.filter(r => raceStats[r]);
 
@@ -275,7 +323,7 @@ function printResults(results: MatchResult[], raceFilter?: Race): void {
   const longSec = longestMatch / TICK_RATE;
 
   console.log(`\n${'='.repeat(80)}`);
-  console.log(`  BALANCE SIMULATION — ${results.length} matches`);
+  console.log(`  BALANCE SIMULATION — ${results.length} matches [${mapLabel}]`);
   console.log(`  Avg duration: ${fmtTime(avgDuration)} | Shortest: ${fmtTime(shortSec)} | Longest: ${fmtTime(longSec)}`);
   console.log(`  Win conditions: ${Object.entries(winConditions).map(([k, v]) => `${k}=${v}`).join(', ')}`);
   console.log(`${'='.repeat(80)}\n`);
@@ -443,7 +491,7 @@ function printRaceDeepDive(
     let w = 0, t = 0;
     for (const r of subset) {
       for (const p of r.perPlayer) {
-        if (p.race !== race) continue;
+        if (p.isEmpty || p.race !== race) continue;
         t++;
         if (r.winner === p.team) w++;
       }
@@ -484,6 +532,14 @@ function main(): void {
   const raceFilter = raceFilterArg ? raceFilterArg.split('=')[1] as Race : undefined;
   const diffArg = args.find(a => a.startsWith('--difficulty='));
   const difficulty = (diffArg?.split('=')[1] as BotDifficultyLevel) ?? BotDifficultyLevel.Medium;
+  const mapArg = args.find(a => a.startsWith('--map='));
+  const mapKey = mapArg?.split('=')[1] ?? '1v1';
+
+  const preset = MAP_PRESETS[mapKey];
+  if (!preset) {
+    console.log(`Unknown map: "${mapKey}". Valid maps: ${Object.keys(MAP_PRESETS).join(', ')}`);
+    process.exit(1);
+  }
 
   // Validate race filter
   if (raceFilter && !ALL_RACES.includes(raceFilter)) {
@@ -491,29 +547,27 @@ function main(): void {
     process.exit(1);
   }
 
-  // Filter races if --race specified
-  const racesToTest = raceFilter
-    ? ALL_RACES // test all matchups but deep-dive into specified race
-    : ALL_RACES;
+  const racesToTest = ALL_RACES;
+  const teamSize = preset.playersPerTeam;
 
   let matchups: Matchup[];
   let modeName: string;
   if (fullMode) {
-    matchups = generateFullMatchups(racesToTest);
+    matchups = generateFullMatchups(racesToTest, teamSize);
     modeName = 'full exhaustive';
   } else if (mixedMode) {
-    matchups = generateMixedMatchups(racesToTest);
+    matchups = generateMixedMatchups(racesToTest, teamSize);
     modeName = 'mixed-team';
   } else {
-    matchups = generateMirrorMatchups(racesToTest);
-    modeName = 'mirror-team round robin';
+    matchups = generateMirrorMatchups(racesToTest, teamSize);
+    modeName = 'mirror round robin';
   }
 
   const totalMatches = matchups.length * matchesPerMatchup;
   console.log(`Running ${totalMatches} matches (${matchups.length} matchups x ${matchesPerMatchup} each)...`);
-  console.log(`  Mode: ${modeName}`);
+  console.log(`  Mode: ${modeName} | Map: ${preset.label} | Difficulty: ${difficulty}`);
   if (raceFilter) console.log(`  Deep dive: ${raceFilter}`);
-  console.log(`  Options: --full, --mixed, --race=Name, --difficulty=easy|medium|hard|nightmare, N (matches/matchup)`);
+  console.log(`  Options: --map=1v1|2v2|3v3|4v4, --full, --mixed, --race=Name, --difficulty=easy|medium|hard|nightmare, N (matches/matchup)`);
 
   const results: MatchResult[] = [];
   let completed = 0;
@@ -521,7 +575,7 @@ function main(): void {
 
   for (const mu of matchups) {
     for (let n = 0; n < matchesPerMatchup; n++) {
-      const result = runHeadlessMatch(mu.bottom[0], mu.bottom[1], mu.top[0], mu.top[1], difficulty);
+      const result = runHeadlessMatch(mu.team0, mu.team1, preset.mapDef, difficulty);
       results.push(result);
       completed++;
       if (completed % 10 === 0 || completed === totalMatches) {
@@ -534,7 +588,7 @@ function main(): void {
   }
   console.log('');
 
-  printResults(results, raceFilter);
+  printResults(results, preset.label, raceFilter);
 }
 
 main();

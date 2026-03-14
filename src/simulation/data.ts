@@ -5,25 +5,25 @@ export const RACE_BUILDING_COSTS: Record<Race, Record<BuildingType, { gold: numb
   // Crown: Gold+Wood economy. Premium gold cost for strong units.
   [Race.Crown]: {
     [BuildingType.MeleeSpawner]:  { gold: 85,  wood: 0,  stone: 0,  hp: 280 },
-    [BuildingType.RangedSpawner]: { gold: 92,  wood: 10, stone: 0,  hp: 230 },
-    [BuildingType.CasterSpawner]: { gold: 101, wood: 10, stone: 0,  hp: 200 },
-    [BuildingType.Tower]:         { gold: 151, wood: 0,  stone: 13, hp: 220 },
+    [BuildingType.RangedSpawner]: { gold: 0,   wood: 40,  stone: 0,  hp: 230 },
+    [BuildingType.CasterSpawner]: { gold: 100, wood: 10, stone: 0,  hp: 200 },
+    [BuildingType.Tower]:         { gold: 113, wood: 0,  stone: 10, hp: 220 },
     [BuildingType.HarvesterHut]:  { gold: 50,  wood: 0,  stone: 0,  hp: 150 },
   },
   // Horde: Gold+Stone economy. Durable buildings, stone-heavy costs.
   [Race.Horde]: {
-    [BuildingType.MeleeSpawner]:  { gold: 30,  wood: 0,  stone: 60, hp: 350 },
-    [BuildingType.RangedSpawner]: { gold: 121, wood: 0,  stone: 16, hp: 300 },
+    [BuildingType.MeleeSpawner]:  { gold: 0,   wood: 0,  stone: 75, hp: 350 },
+    [BuildingType.RangedSpawner]: { gold: 125, wood: 0,  stone: 0,  hp: 300 },
     [BuildingType.CasterSpawner]: { gold: 124, wood: 0,  stone: 19, hp: 250 },
-    [BuildingType.Tower]:         { gold: 146, wood: 0,  stone: 40, hp: 280 },
+    [BuildingType.Tower]:         { gold: 110, wood: 0,  stone: 30, hp: 280 },
     [BuildingType.HarvesterHut]:  { gold: 50,  wood: 0,  stone: 11, hp: 180 },
   },
   // Goblins: Gold+Wood economy. Very cheap, fragile buildings.
   [Race.Goblins]: {
-    [BuildingType.MeleeSpawner]:  { gold: 35,  wood: 11, stone: 0,  hp: 180 },
-    [BuildingType.RangedSpawner]: { gold: 39,  wood: 14, stone: 0,  hp: 160 },
+    [BuildingType.MeleeSpawner]:  { gold: 0,   wood: 30, stone: 0,  hp: 180 },
+    [BuildingType.RangedSpawner]: { gold: 45,  wood: 0,  stone: 0,  hp: 160 },
     [BuildingType.CasterSpawner]: { gold: 49,  wood: 18, stone: 0,  hp: 140 },
-    [BuildingType.Tower]:         { gold: 56,  wood: 18, stone: 0,  hp: 150 },
+    [BuildingType.Tower]:         { gold: 36,  wood: 12, stone: 0,  hp: 150 },
     [BuildingType.HarvesterHut]:  { gold: 21,  wood: 7,  stone: 0,  hp: 110 },
   },
   // Oozlings: Gold+Stone economy. Cheap (swarm units).
@@ -31,7 +31,7 @@ export const RACE_BUILDING_COSTS: Record<Race, Record<BuildingType, { gold: numb
     [BuildingType.MeleeSpawner]:  { gold: 60,  wood: 0,  stone: 0,  hp: 200 },
     [BuildingType.RangedSpawner]: { gold: 70,  wood: 0,  stone: 20, hp: 180 },
     [BuildingType.CasterSpawner]: { gold: 45,  wood: 0,  stone: 45, hp: 160 },
-    [BuildingType.Tower]:         { gold: 100, wood: 0,  stone: 25, hp: 170 },
+    [BuildingType.Tower]:         { gold: 75,  wood: 0,  stone: 19, hp: 170 },
     [BuildingType.HarvesterHut]:  { gold: 35,  wood: 0,  stone: 10, hp: 130 },
   },
   // Demon: Stone+Wood economy. No gold. Glass cannon, reduced costs.
@@ -39,7 +39,7 @@ export const RACE_BUILDING_COSTS: Record<Race, Record<BuildingType, { gold: numb
     [BuildingType.MeleeSpawner]:  { gold: 0,  wood: 12, stone: 27, hp: 200 },
     [BuildingType.RangedSpawner]: { gold: 0,  wood: 15, stone: 31, hp: 170 },
     [BuildingType.CasterSpawner]: { gold: 0,  wood: 20, stone: 38, hp: 140 },
-    [BuildingType.Tower]:         { gold: 0,  wood: 20, stone: 43, hp: 160 },
+    [BuildingType.Tower]:         { gold: 0,  wood: 15, stone: 32, hp: 160 },
     [BuildingType.HarvesterHut]:  { gold: 0,  wood: 8,  stone: 14, hp: 120 },
   },
   // Deep: Wood+Gold economy. Very durable buildings.
@@ -47,7 +47,7 @@ export const RACE_BUILDING_COSTS: Record<Race, Record<BuildingType, { gold: numb
     [BuildingType.MeleeSpawner]:  { gold: 75, wood: 10, stone: 0,  hp: 380 },
     [BuildingType.RangedSpawner]: { gold: 30, wood: 55, stone: 0,  hp: 300 },
     [BuildingType.CasterSpawner]: { gold: 35, wood: 65, stone: 0,  hp: 260 },
-    [BuildingType.Tower]:         { gold: 30, wood: 70, stone: 0,  hp: 280 },
+    [BuildingType.Tower]:         { gold: 23, wood: 53, stone: 0,  hp: 280 },
     [BuildingType.HarvesterHut]:  { gold: 15, wood: 30, stone: 0,  hp: 170 },
   },
   // Wild: Wood+Stone economy. No gold. Medium buildings.
@@ -55,7 +55,7 @@ export const RACE_BUILDING_COSTS: Record<Race, Record<BuildingType, { gold: numb
     [BuildingType.MeleeSpawner]:  { gold: 0,  wood: 30, stone: 15, hp: 250 },
     [BuildingType.RangedSpawner]: { gold: 0,  wood: 35, stone: 18, hp: 220 },
     [BuildingType.CasterSpawner]: { gold: 0,  wood: 40, stone: 22, hp: 190 },
-    [BuildingType.Tower]:         { gold: 0,  wood: 45, stone: 25, hp: 200 },
+    [BuildingType.Tower]:         { gold: 0,  wood: 34, stone: 19, hp: 200 },
     [BuildingType.HarvesterHut]:  { gold: 0,  wood: 18, stone: 8,  hp: 140 },
   },
   // Geists: Stone+Gold economy. Medium buildings.
@@ -63,7 +63,7 @@ export const RACE_BUILDING_COSTS: Record<Race, Record<BuildingType, { gold: numb
     [BuildingType.MeleeSpawner]:  { gold: 20, wood: 0,  stone: 35, hp: 240 },
     [BuildingType.RangedSpawner]: { gold: 25, wood: 0,  stone: 40, hp: 210 },
     [BuildingType.CasterSpawner]: { gold: 30, wood: 0,  stone: 48, hp: 180 },
-    [BuildingType.Tower]:         { gold: 25, wood: 0,  stone: 55, hp: 180 },
+    [BuildingType.Tower]:         { gold: 19, wood: 0,  stone: 41, hp: 180 },
     [BuildingType.HarvesterHut]:  { gold: 12, wood: 0,  stone: 18, hp: 130 },
   },
   // Tenders: Wood+Gold economy. Durable natural buildings.
@@ -71,7 +71,7 @@ export const RACE_BUILDING_COSTS: Record<Race, Record<BuildingType, { gold: numb
     [BuildingType.MeleeSpawner]:  { gold: 19, wood: 38, stone: 0,  hp: 320 },
     [BuildingType.RangedSpawner]: { gold: 23, wood: 41, stone: 0,  hp: 270 },
     [BuildingType.CasterSpawner]: { gold: 26, wood: 45, stone: 0,  hp: 240 },
-    [BuildingType.Tower]:         { gold: 23, wood: 49, stone: 0,  hp: 300 },
+    [BuildingType.Tower]:         { gold: 17, wood: 37, stone: 0,  hp: 300 },
     [BuildingType.HarvesterHut]:  { gold: 11, wood: 21, stone: 0,  hp: 160 },
   },
 };
@@ -285,6 +285,8 @@ export const PLAYER_COLORS: string[] = [
   '#fdd835',  // P3 - Yellow (Yellow Buildings)
   '#00bfa5',  // P4 - Teal (Black Buildings)
   '#ff6d00',  // P5 - Orange (shares sprite variant)
+  '#4caf50',  // P6 - Green (shares sprite variant)
+  '#00e5ff',  // P7 - Cyan (shares sprite variant)
 ];
 
 // Harvester constants
@@ -323,6 +325,8 @@ export interface UpgradeSpecial {
   cleaveTargets?: number;       // melee hits N additional adjacent enemies (Minotaur)
   hopAttack?: boolean;          // unit leaps to target, AoE slow on landing (Frogs)
   spawnCount?: number;          // override base spawnCount (e.g. Spider Brood=3, Spider Swarm=5)
+  goldOnKill?: number;          // earn N gold when this unit kills an enemy
+  goldOnDeath?: number;         // earn N gold when this unit dies
 }
 
 export interface UpgradeNodeDef {
@@ -345,11 +349,11 @@ export const UPGRADE_TREES: Record<Race, Partial<Record<BuildingType, Record<Upg
   // ============ CROWN (Humans) — Shield & Balance [HYBRID] ============
   [Race.Crown]: {
     [BuildingType.MeleeSpawner]: {
-      B: { name: 'Iron Guard', desc: '+40% HP, +20% dmg', hpMult: 1.40, damageMult: 1.20, spawnSpeedMult: 0.88 },
-      C: { name: 'Swift Blade', desc: '+20% speed, faster atk', moveSpeedMult: 1.20, attackSpeedMult: 0.85, spawnSpeedMult: 0.88 },
-      D: { name: 'Royal Knight', desc: '+60% HP, 20% dmg reduction', hpMult: 1.60, special: { damageReductionPct: 0.20 }, spawnSpeedMult: 0.82 },
-      E: { name: 'Crusader', desc: '+45% dmg, knockback/2', damageMult: 1.45, special: { knockbackEveryN: 2 }, spawnSpeedMult: 0.82 },
-      F: { name: 'Duelist', desc: '+30% speed, 30% dodge', moveSpeedMult: 1.30, special: { dodgeChance: 0.30 }, spawnSpeedMult: 0.82 },
+      B: { name: 'Buccaneer', desc: '+20% dmg, +3 gold/kill', damageMult: 1.20, special: { goldOnKill: 3 }, spawnSpeedMult: 0.88 },
+      C: { name: 'Noble', desc: '+20% speed, faster atk', moveSpeedMult: 1.20, attackSpeedMult: 0.85, spawnSpeedMult: 0.88 },
+      D: { name: 'Corsair Captain', desc: '+40% HP, +5 gold/death', hpMult: 1.40, special: { goldOnDeath: 5, goldOnKill: 3 }, spawnSpeedMult: 0.82 },
+      E: { name: 'Pirate King', desc: '+35% dmg, +6 gold/kill', damageMult: 1.35, special: { goldOnKill: 6, goldOnDeath: 8 }, spawnSpeedMult: 0.82 },
+      F: { name: 'King', desc: '+30% speed, 30% dodge', moveSpeedMult: 1.30, special: { dodgeChance: 0.30 }, spawnSpeedMult: 0.82 },
       G: { name: 'Champion', desc: '+50% dmg, faster atk', damageMult: 1.50, attackSpeedMult: 0.80, spawnSpeedMult: 0.82 },
     },
     [BuildingType.RangedSpawner]: {
@@ -415,20 +419,20 @@ export const UPGRADE_TREES: Record<Race, Partial<Record<BuildingType, Record<Upg
   // ============ GOBLINS — Dodge & Poison [WIDE] ============
   [Race.Goblins]: {
     [BuildingType.MeleeSpawner]: {
-      B: { name: 'Armored Sticker', desc: '+30% HP, +15% dmg', hpMult: 1.30, damageMult: 1.15, spawnSpeedMult: 0.80 },
+      B: { name: 'Troll Brute', desc: '+30% HP, +15% dmg', hpMult: 1.30, damageMult: 1.15, spawnSpeedMult: 0.80 },
       C: { name: 'Quick Sticker', desc: '+25% speed, faster atk', moveSpeedMult: 1.25, attackSpeedMult: 0.85, spawnSpeedMult: 0.80 },
-      D: { name: 'Poison Lancer', desc: '+30% dmg, +2 burn', damageMult: 1.30, special: { extraBurnStacks: 2 }, spawnSpeedMult: 0.70 },
-      E: { name: 'Dirty Fighter', desc: '+40% dmg, +2 slow', damageMult: 1.40, special: { extraSlowStacks: 2 } },
+      D: { name: 'Troll Smasher', desc: '+30% dmg, +2 burn', damageMult: 1.30, special: { extraBurnStacks: 2 }, spawnSpeedMult: 0.70 },
+      E: { name: 'Troll Warlord', desc: '+40% dmg, +2 slow', damageMult: 1.40, special: { extraSlowStacks: 2 } },
       F: { name: 'Shadow Sticker', desc: '+35% speed, 30% dodge', moveSpeedMult: 1.35, special: { dodgeChance: 0.30 }, spawnSpeedMult: 0.70 },
       G: { name: 'Goblin Ace', desc: '+45% dmg, faster atk', damageMult: 1.45, attackSpeedMult: 0.80 },
     },
     [BuildingType.RangedSpawner]: {
       B: { name: 'Venom Knifer', desc: '+25% dmg, +2 burn', damageMult: 1.25, special: { extraBurnStacks: 2 }, spawnSpeedMult: 0.80 },
-      C: { name: 'Quick Knifer', desc: 'Faster atk, +20% range', attackSpeedMult: 0.80, rangeMult: 1.20, spawnSpeedMult: 0.80 },
+      C: { name: 'War Pig', desc: 'Faster atk, +20% range', attackSpeedMult: 0.80, rangeMult: 1.20, spawnSpeedMult: 0.80 },
       D: { name: 'Plague Knifer', desc: '+35% dmg, +3 burn', damageMult: 1.35, special: { extraBurnStacks: 3 }, spawnSpeedMult: 0.70 },
       E: { name: 'Fan Knifer', desc: 'Fires 2 projectiles', special: { multishotCount: 1, multishotDamagePct: 0.70 } },
-      F: { name: 'Ghost Knifer', desc: '+30% speed, 25% dodge', moveSpeedMult: 1.30, special: { dodgeChance: 0.25 }, spawnSpeedMult: 0.70 },
-      G: { name: 'Blight Knifer', desc: '+40% dmg, +25% range', damageMult: 1.40, rangeMult: 1.25 },
+      F: { name: 'King Pig', desc: '+30% speed, 25% dodge', moveSpeedMult: 1.30, special: { dodgeChance: 0.25 }, spawnSpeedMult: 0.70 },
+      G: { name: 'Pig Warlord', desc: '+40% dmg, +25% range', damageMult: 1.40, rangeMult: 1.25 },
     },
     [BuildingType.CasterSpawner]: {
       B: { name: 'Hex Master', desc: '+25% HP, +3 slow', hpMult: 1.25, special: { extraSlowStacks: 3 }, spawnSpeedMult: 0.80 },
@@ -520,28 +524,28 @@ export const UPGRADE_TREES: Record<Race, Partial<Record<BuildingType, Record<Upg
   // ============ DEEP (Aquatic) — Slow & Control [TALL] ============
   [Race.Deep]: {
     [BuildingType.MeleeSpawner]: {
-      B: { name: 'Coral Guard', desc: '+50% HP, +25% dmg', hpMult: 1.50, damageMult: 1.25, spawnSpeedMult: 0.90 },
+      B: { name: 'Bull Whale', desc: '+50% HP, +25% dmg', hpMult: 1.50, damageMult: 1.25, spawnSpeedMult: 0.90 },
       C: { name: 'Frog Scout', desc: '+20% speed, +2 slow', moveSpeedMult: 1.20, special: { extraSlowStacks: 2 }, spawnSpeedMult: 0.90 },
-      D: { name: 'Reef Wall', desc: '+70% HP, 20% dmg reduction', hpMult: 1.70, special: { damageReductionPct: 0.20 }, spawnSpeedMult: 0.85 },
-      E: { name: 'Tidal Crusher', desc: '+45% dmg, knockback/2', damageMult: 1.45, special: { knockbackEveryN: 2 }, spawnSpeedMult: 0.85 },
+      D: { name: 'Armored Whale', desc: '+70% HP, 20% dmg reduction', hpMult: 1.70, special: { damageReductionPct: 0.20 }, spawnSpeedMult: 0.85 },
+      E: { name: 'Leviathan', desc: '+45% dmg, knockback/2', damageMult: 1.45, special: { knockbackEveryN: 2 }, spawnSpeedMult: 0.85 },
       F: { name: 'Leapfrog', desc: '+25% speed, hop attack, +3 slow', moveSpeedMult: 1.25, special: { extraSlowStacks: 3, hopAttack: true }, spawnSpeedMult: 0.85 },
       G: { name: 'Frog Titan', desc: '+35% dmg, regen 3/s, hop attack', damageMult: 1.35, special: { regenPerSec: 3, hopAttack: true }, spawnSpeedMult: 0.85 },
     },
     [BuildingType.RangedSpawner]: {
-      B: { name: 'Deep Shot', desc: '+30% HP, +30% dmg', hpMult: 1.30, damageMult: 1.30, spawnSpeedMult: 0.90 },
-      C: { name: 'Spray Shot', desc: 'Faster atk, +2 slow', attackSpeedMult: 0.80, special: { extraSlowStacks: 2 }, spawnSpeedMult: 0.90 },
-      D: { name: 'Hydro Cannon', desc: '+45% dmg, splash 2t', damageMult: 1.45, special: { splashRadius: 2, splashDamagePct: 0.50 }, spawnSpeedMult: 0.85 },
-      E: { name: 'Pressure Burst', desc: '+35% dmg, +3 slow', damageMult: 1.35, special: { extraSlowStacks: 3 }, spawnSpeedMult: 0.85 },
-      F: { name: 'Rapid Bubbles', desc: 'Much faster, +25% range', attackSpeedMult: 0.70, rangeMult: 1.25, spawnSpeedMult: 0.85 },
-      G: { name: 'Torrent Shot', desc: '+35% dmg, splash 3t', damageMult: 1.35, special: { splashRadius: 3, splashDamagePct: 0.45 }, spawnSpeedMult: 0.85 },
+      B: { name: 'Reef Shark', desc: '+30% HP, +30% dmg', hpMult: 1.30, damageMult: 1.30, spawnSpeedMult: 0.90 },
+      C: { name: 'Spray Crab', desc: 'Faster atk, +2 slow', attackSpeedMult: 0.80, special: { extraSlowStacks: 2 }, spawnSpeedMult: 0.90 },
+      D: { name: 'Hammerhead', desc: '+45% dmg, splash 2t', damageMult: 1.45, special: { splashRadius: 2, splashDamagePct: 0.50 }, spawnSpeedMult: 0.85 },
+      E: { name: 'Great White', desc: '+35% dmg, +3 slow', damageMult: 1.35, special: { extraSlowStacks: 3 }, spawnSpeedMult: 0.85 },
+      F: { name: 'Snapper Crab', desc: 'Much faster, +25% range', attackSpeedMult: 0.70, rangeMult: 1.25, spawnSpeedMult: 0.85 },
+      G: { name: 'King Crab', desc: '+35% dmg, splash 3t', damageMult: 1.35, special: { splashRadius: 3, splashDamagePct: 0.45 }, spawnSpeedMult: 0.85 },
     },
     [BuildingType.CasterSpawner]: {
-      B: { name: 'Tsunami Caller', desc: '+30% HP, cleanse +3', hpMult: 1.30, special: { healBonus: 3 }, spawnSpeedMult: 0.90 },
-      C: { name: 'Whirlpool Caller', desc: '+1 AoE, faster atk', special: { aoeRadiusBonus: 1 }, attackSpeedMult: 0.80, spawnSpeedMult: 0.90 },
-      D: { name: 'Purifier', desc: '+35% dmg, cleanse +4, +2 slow', damageMult: 1.35, special: { healBonus: 4, extraSlowStacks: 2 }, spawnSpeedMult: 0.85 },
-      E: { name: 'Maelstrom Mage', desc: '+45% dmg, +2 AoE', damageMult: 1.45, special: { aoeRadiusBonus: 2 }, spawnSpeedMult: 0.85 },
-      F: { name: 'Purge Weaver', desc: 'Very fast, cleanse +4', attackSpeedMult: 0.65, special: { healBonus: 4 }, spawnSpeedMult: 0.85 },
-      G: { name: 'Deep Current', desc: '+40% dmg, +35% range', damageMult: 1.40, rangeMult: 1.35, spawnSpeedMult: 0.85 },
+      B: { name: 'Sea Star', desc: '+30% HP, cleanse +3', hpMult: 1.30, special: { healBonus: 3 }, spawnSpeedMult: 0.90 },
+      C: { name: 'Snap Clam', desc: '+1 AoE, faster atk', special: { aoeRadiusBonus: 1 }, attackSpeedMult: 0.80, spawnSpeedMult: 0.90 },
+      D: { name: 'Crown Star', desc: '+35% dmg, cleanse +4, +2 slow', damageMult: 1.35, special: { healBonus: 4, extraSlowStacks: 2 }, spawnSpeedMult: 0.85 },
+      E: { name: 'Star Lord', desc: '+45% dmg, +2 AoE', damageMult: 1.45, special: { aoeRadiusBonus: 2 }, spawnSpeedMult: 0.85 },
+      F: { name: 'Giant Clam', desc: 'Very fast, cleanse +4', attackSpeedMult: 0.65, special: { healBonus: 4 }, spawnSpeedMult: 0.85 },
+      G: { name: 'Pearl Maw', desc: '+40% dmg, +35% range', damageMult: 1.40, rangeMult: 1.35, spawnSpeedMult: 0.85 },
     },
     [BuildingType.Tower]: {
       B: { name: 'Tidal Pool', desc: '+50% HP, +35% dmg', hpMult: 1.50, damageMult: 1.35 },
@@ -563,10 +567,10 @@ export const UPGRADE_TREES: Record<Race, Partial<Record<BuildingType, Record<Upg
       G: { name: 'Spider Swarm', desc: 'Spawn 5 spiders, faster atk, +2 slow', attackSpeedMult: 0.80, damageMult: 0.45, hpMult: 0.30, special: { spawnCount: 5, extraSlowStacks: 2 }, spawnSpeedMult: 0.82 },
     },
     [BuildingType.RangedSpawner]: {
-      B: { name: 'Heavy Chucker', desc: '+30% HP, +30% dmg', hpMult: 1.30, damageMult: 1.30, spawnSpeedMult: 0.88 },
+      B: { name: 'Chameleon', desc: '+30% HP, +30% dmg', hpMult: 1.30, damageMult: 1.30, spawnSpeedMult: 0.88 },
       C: { name: 'Spitting Snake', desc: 'Faster atk, +2 slow', attackSpeedMult: 0.80, special: { extraSlowStacks: 2 }, spawnSpeedMult: 0.88 },
-      D: { name: 'Blight Chucker', desc: '+40% dmg, splash 2t', damageMult: 1.40, special: { splashRadius: 2, splashDamagePct: 0.50 }, spawnSpeedMult: 0.82 },
-      E: { name: 'Toxic Chucker', desc: '+35% dmg, +2 burn', damageMult: 1.35, special: { extraBurnStacks: 2 }, spawnSpeedMult: 0.82 },
+      D: { name: 'Stalker', desc: '+40% dmg, splash 2t', damageMult: 1.40, special: { splashRadius: 2, splashDamagePct: 0.50 }, spawnSpeedMult: 0.82 },
+      E: { name: 'Predator', desc: '+35% dmg, +2 burn', damageMult: 1.35, special: { extraBurnStacks: 2 }, spawnSpeedMult: 0.82 },
       F: { name: 'Venom Serpent', desc: 'Much faster, +25% range, +2 burn', attackSpeedMult: 0.70, rangeMult: 1.25, special: { extraBurnStacks: 2 }, spawnSpeedMult: 0.82 },
       G: { name: 'Hydra Spit', desc: '+45% dmg, splash 3t, +2 slow', damageMult: 1.45, special: { splashRadius: 3, splashDamagePct: 0.50, extraSlowStacks: 2 }, spawnSpeedMult: 0.82 },
     },
@@ -599,19 +603,19 @@ export const UPGRADE_TREES: Record<Race, Partial<Record<BuildingType, Record<Upg
     },
     [BuildingType.RangedSpawner]: {
       B: { name: 'Venom Wraith', desc: '+35% dmg, +2 burn', damageMult: 1.35, special: { extraBurnStacks: 2 }, spawnSpeedMult: 0.90 },
-      C: { name: 'Shadow Arrow', desc: 'Faster atk, +25% range', attackSpeedMult: 0.80, rangeMult: 1.25, spawnSpeedMult: 0.90 },
+      C: { name: 'Bone Skull', desc: 'Faster atk, +25% range', attackSpeedMult: 0.80, rangeMult: 1.25, spawnSpeedMult: 0.90 },
       D: { name: 'Plague Arrow', desc: '+45% dmg, +3 burn', damageMult: 1.45, special: { extraBurnStacks: 3 }, spawnSpeedMult: 0.85 },
       E: { name: 'Hex Volley', desc: 'Fires 2 projectiles', special: { multishotCount: 1, multishotDamagePct: 0.75 }, spawnSpeedMult: 0.85 },
-      F: { name: 'Ghost Archer', desc: '+30% speed, 25% dodge', moveSpeedMult: 1.30, special: { dodgeChance: 0.25 }, spawnSpeedMult: 0.85 },
-      G: { name: 'Blight Bow', desc: '+50% dmg, +30% range', damageMult: 1.50, rangeMult: 1.30, spawnSpeedMult: 0.85 },
+      F: { name: 'Wailing Skull', desc: '+30% speed, 25% dodge', moveSpeedMult: 1.30, special: { dodgeChance: 0.25 }, spawnSpeedMult: 0.85 },
+      G: { name: 'Death Skull', desc: '+50% dmg, +30% range', damageMult: 1.50, rangeMult: 1.30, spawnSpeedMult: 0.85 },
     },
     [BuildingType.CasterSpawner]: {
       B: { name: 'Plague Mage', desc: '+30% HP, +5 heal', hpMult: 1.30, special: { healBonus: 5 }, spawnSpeedMult: 0.90 },
-      C: { name: 'Drain Mage', desc: 'Faster atk, +25% range', attackSpeedMult: 0.80, rangeMult: 1.25, spawnSpeedMult: 0.90 },
+      C: { name: 'Dark Sorcerer', desc: 'Faster atk, +25% range', attackSpeedMult: 0.80, rangeMult: 1.25, spawnSpeedMult: 0.90 },
       D: { name: 'Pestilence', desc: '+40% dmg, +7 heal, +2 burn', damageMult: 1.40, special: { healBonus: 7, extraBurnStacks: 2 }, spawnSpeedMult: 0.85 },
       E: { name: 'Soul Siphon', desc: '+45% dmg, +2 AoE', damageMult: 1.45, special: { aoeRadiusBonus: 2 }, spawnSpeedMult: 0.85 },
-      F: { name: 'Void Weaver', desc: 'Very fast, +5 heal', attackSpeedMult: 0.65, special: { healBonus: 5 }, spawnSpeedMult: 0.85 },
-      G: { name: 'Death Caller', desc: '+55% dmg, +30% range', damageMult: 1.55, rangeMult: 1.30, spawnSpeedMult: 0.85 },
+      F: { name: 'Shadow Sorcerer', desc: 'Very fast, +5 heal', attackSpeedMult: 0.65, special: { healBonus: 5 }, spawnSpeedMult: 0.85 },
+      G: { name: 'Arch Sorcerer', desc: '+55% dmg, +30% range', damageMult: 1.55, rangeMult: 1.30, spawnSpeedMult: 0.85 },
     },
     [BuildingType.Tower]: {
       B: { name: 'Shadow Spire', desc: '+50% HP, +35% dmg', hpMult: 1.50, damageMult: 1.35 },
@@ -625,12 +629,12 @@ export const UPGRADE_TREES: Record<Race, Partial<Record<BuildingType, Record<Upg
   // ============ TENDERS (Nature) — Regen & Heal [TALL] ============
   [Race.Tenders]: {
     [BuildingType.MeleeSpawner]: {
-      B: { name: 'Ironbark', desc: '+55% HP, +20% dmg', hpMult: 1.55, damageMult: 1.20, spawnSpeedMult: 0.90 },
-      C: { name: 'Thornhide', desc: '+35% HP, regen 3/s', hpMult: 1.35, special: { regenPerSec: 3 }, spawnSpeedMult: 0.90 },
-      D: { name: 'Ancient Oak', desc: '+75% HP, 20% dmg reduction', hpMult: 1.75, special: { damageReductionPct: 0.20 }, spawnSpeedMult: 0.85 },
-      E: { name: 'Barkbreaker', desc: '+50% dmg, knockback/2', damageMult: 1.50, special: { knockbackEveryN: 2 }, spawnSpeedMult: 0.85 },
-      F: { name: 'Mossheart', desc: '+50% HP, regen 5/s', hpMult: 1.50, special: { regenPerSec: 5 }, spawnSpeedMult: 0.85 },
-      G: { name: 'Wildroot', desc: '+40% dmg, +20% speed, +2 slow', damageMult: 1.40, moveSpeedMult: 1.20, special: { extraSlowStacks: 2 }, spawnSpeedMult: 0.85 },
+      B: { name: 'Young Ent', desc: '+55% HP, +20% dmg', hpMult: 1.55, damageMult: 1.20, spawnSpeedMult: 0.90 },
+      C: { name: 'Wild Radish', desc: '+35% HP, regen 3/s', hpMult: 1.35, special: { regenPerSec: 3 }, spawnSpeedMult: 0.90 },
+      D: { name: 'Elder Ent', desc: '+75% HP, 20% dmg reduction', hpMult: 1.75, special: { damageReductionPct: 0.20 }, spawnSpeedMult: 0.85 },
+      E: { name: 'Ancient Ent', desc: '+50% dmg, knockback/2', damageMult: 1.50, special: { knockbackEveryN: 2 }, spawnSpeedMult: 0.85 },
+      F: { name: 'Radish Brute', desc: '+50% HP, regen 5/s', hpMult: 1.50, special: { regenPerSec: 5 }, spawnSpeedMult: 0.85 },
+      G: { name: 'Radish King', desc: '+40% dmg, +20% speed, +2 slow', damageMult: 1.40, moveSpeedMult: 1.20, special: { extraSlowStacks: 2 }, spawnSpeedMult: 0.85 },
     },
     [BuildingType.RangedSpawner]: {
       B: { name: 'Heavy Tinker', desc: '+35% HP, +30% dmg', hpMult: 1.35, damageMult: 1.30, spawnSpeedMult: 0.90 },

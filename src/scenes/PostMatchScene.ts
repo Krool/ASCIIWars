@@ -1,7 +1,7 @@
 import { Scene, SceneManager } from './Scene';
 import { GameState, Team, PlayerStats } from '../simulation/types';
 import { PLAYER_COLORS, RACE_COLORS } from '../simulation/data';
-import { UIAssets } from '../rendering/UIAssets';
+import { UIAssets, IconName } from '../rendering/UIAssets';
 import { SpriteLoader, getSpriteFrame } from '../rendering/SpriteLoader';
 
 export interface MatchStats {
@@ -282,25 +282,9 @@ export class PostMatchScene implements Scene {
     ctx.fillStyle = '#a01020';
     ctx.fillText(`ENEMY ${enemyHp}`, w / 2 + barW / 2 + barGap, hqY + 38);
 
-    // Awards
-    const awards = this.computeAwards(pStats);
-    const awardY = hqY + rowH * 2.2;
-    const awardRibW = Math.min(340, panelW * 0.55);
-    const awardRibH = fontSize * 1.6;
-    this.ui.drawSmallRibbon(ctx, (w - awardRibW) / 2, awardY - awardRibH * 0.7, awardRibW, awardRibH, 2);
-    ctx.font = `bold ${fontSize}px monospace`;
-    ctx.fillStyle = '#3e2c1a';
-    ctx.fillText('AWARDS', w / 2, awardY);
-    ctx.font = `bold ${fontSize * 0.8}px monospace`;
-    for (let i = 0; i < awards.length; i++) {
-      const a = awards[i];
-      ctx.fillStyle = this.darkenColor(PLAYER_COLORS[a.playerId], 0.6);
-      ctx.fillText(`${a.label}: ${this.slotLabel(a.playerId)} (${a.value})`, w / 2, awardY + (i + 1) * rowH * 0.8);
-    }
-
-    // War Hero
-    const heroY = awardY + (awards.length + 1.5) * rowH * 0.8;
-    this.drawWarHero(ctx, state, w, heroY, fontSize);
+    // Awards + War Hero combined section
+    const sectionY = hqY + rowH * 2.2;
+    this.drawAwardsAndHero(ctx, state, pStats, w, innerW, sectionY, fontSize);
 
     // Continue button - Sword
     const btn = this.getButtonRect();
@@ -320,58 +304,168 @@ export class PostMatchScene implements Scene {
     }
   }
 
-  private drawWarHero(ctx: CanvasRenderingContext2D, state: GameState, w: number, y: number, fontSize: number): void {
+  private drawAwardsAndHero(
+    ctx: CanvasRenderingContext2D, state: GameState, pStats: PlayerStats[],
+    w: number, innerW: number, y: number, fontSize: number,
+  ): void {
+    const awards = this.computeAwards(pStats);
+    const awardIcons: Record<string, IconName> = {
+      'MVP Damage': 'sword', 'Best Economy': 'gold', 'Best Defender': 'shield',
+    };
+    const gap = Math.round(fontSize * 0.4); // consistent spacing unit
+
+    // --- Awards as horizontal cards ---
+    if (awards.length > 0) {
+      const cardGap = gap;
+      const totalGap = cardGap * (awards.length - 1);
+      const cardW = Math.min(Math.floor((innerW - totalGap) / awards.length), 180);
+      const cardH = fontSize * 3.8;
+      const totalCardsW = cardW * awards.length + totalGap;
+      let cx = (w - totalCardsW) / 2;
+
+      for (const a of awards) {
+        // Card background
+        ctx.fillStyle = 'rgba(62,44,26,0.15)';
+        ctx.strokeStyle = 'rgba(62,44,26,0.3)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.roundRect(cx, y, cardW, cardH, 5);
+        ctx.fill();
+        ctx.stroke();
+
+        const cardCenterX = cx + cardW / 2;
+        const iconSz = fontSize * 1.3;
+        const icon = awardIcons[a.label] ?? 'sword';
+        const inset = gap;
+
+        // Icon centered at top of card
+        this.ui.drawIcon(ctx, icon, cardCenterX - iconSz / 2, y + inset, iconSz);
+
+        // Award label — truncate to fit card
+        ctx.font = `bold ${fontSize * 0.55}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#5a3e1e';
+        const label = this.truncateText(ctx, a.label.toUpperCase(), cardW - inset * 2);
+        ctx.fillText(label, cardCenterX, y + inset + iconSz + fontSize * 0.55);
+
+        // Player name in their color
+        ctx.font = `bold ${fontSize * 0.65}px monospace`;
+        ctx.fillStyle = this.darkenColor(PLAYER_COLORS[a.playerId], 0.6);
+        const name = this.truncateText(ctx, this.slotLabel(a.playerId), cardW - inset * 2);
+        ctx.fillText(name, cardCenterX, y + inset + iconSz + fontSize * 1.3);
+
+        // Value
+        ctx.font = `${fontSize * 0.5}px monospace`;
+        ctx.fillStyle = '#6b5030';
+        ctx.fillText(a.value, cardCenterX, y + inset + iconSz + fontSize * 1.9);
+
+        cx += cardW + cardGap;
+      }
+      y += cardH + gap * 2;
+    }
+
+    // --- War Hero card ---
     const heroes = state.warHeroes;
     if (heroes.length === 0) return;
-
     const hero = heroes[0];
+
     const playerColor = PLAYER_COLORS[hero.playerId];
     const raceColor = RACE_COLORS[hero.race]?.primary ?? '#fff';
 
-    // Animated sprite
-    const spriteSize = fontSize * 4;
+    // Card dimensions — sized to fit content
+    const lineH = fontSize * 1.1; // consistent line spacing
+    const heroCardW = Math.min(innerW, 400);
+    const heroCardH = lineH * 5;
+    const heroCardX = (w - heroCardW) / 2;
+    const heroCardY = y;
+
+    // SpecialPaper background (works at any size, unlike WoodTable)
+    const cardPadX = Math.round(heroCardW * 0.06);
+    const cardPadY = Math.round(heroCardH * 0.1);
+    this.ui.drawSpecialPaper(ctx, heroCardX - cardPadX, heroCardY - cardPadY,
+      heroCardW + cardPadX * 2, heroCardH + cardPadY * 2);
+
+    // Animated sprite on the left side of card — clamped to fit
+    const maxSpriteH = heroCardH - gap * 2;
+    const spriteSize = Math.min(fontSize * 4, maxSpriteH);
+    let spriteDrawW = 0;
     const spriteResult = this.sprites.getUnitSprite(
-      hero.race, hero.category as any, hero.playerId, false, hero.upgradeNode,
+      hero.race, hero.category, hero.playerId, false, hero.upgradeNode,
     );
     if (spriteResult) {
       const [img, def] = spriteResult;
-      const tick = Math.floor(this.animTime * 20); // convert real seconds to ~20fps ticks
+      const tick = Math.floor(this.animTime * 8); // slow idle animation ~8fps
       const frame = getSpriteFrame(tick, def);
       const sx = frame * def.frameW;
       const scale = def.scale ?? 1.0;
-      const drawW = spriteSize * scale;
-      const drawH = spriteSize * scale * (def.heightScale ?? 1.0);
-      const spriteX = w / 2 - drawW / 2;
-      const spriteY = y - fontSize * 0.5;
-      ctx.drawImage(img, sx, 0, def.frameW, def.frameH, spriteX, spriteY, drawW, drawH);
-      y += drawH + fontSize * 0.3;
+      const dw = spriteSize * scale;
+      const dh = spriteSize * scale * (def.heightScale ?? 1.0);
+      const spriteX = heroCardX + gap;
+      const spriteY = heroCardY + (heroCardH - dh) / 2;
+      ctx.drawImage(img, sx, 0, def.frameW, def.frameH, spriteX, spriteY, dw, dh);
+      spriteDrawW = dw + gap;
     }
 
-    // Shield icon + title
-    this.ui.drawIcon(ctx, 'shield', w / 2 - fontSize * 0.5, y - fontSize * 0.8, fontSize * 1.0);
-    ctx.font = `bold ${fontSize * 0.85}px monospace`;
-    ctx.textAlign = 'center';
-    ctx.fillStyle = '#3e2c1a';
-    ctx.fillText('WAR HERO', w / 2, y + fontSize * 0.5);
+    // Text area to the right of sprite
+    const textL = heroCardX + spriteDrawW + gap;
+    const textAvailW = heroCardW - spriteDrawW - gap * 2;
+    const textCenterX = textL + textAvailW / 2;
 
-    ctx.font = `bold ${fontSize}px monospace`;
-    ctx.fillStyle = this.darkenColor(raceColor, 0.55);
-    ctx.fillText(`${hero.name}`, w / 2, y + fontSize * 1.6);
+    // Line positions — consistent rhythm from top of card
+    const line1Y = heroCardY + lineH * 0.9;
+    const line2Y = line1Y + lineH;
+    const line3Y = line2Y + lineH * 0.85;
+    const line4Y = line3Y + lineH;
+    const line5Y = line4Y + lineH * 0.85;
 
-    ctx.font = `bold ${fontSize * 0.8}px monospace`;
-    ctx.fillStyle = this.darkenColor(playerColor, 0.6);
-    const categoryIcon = hero.category === 'melee' ? 'Melee' : hero.category === 'ranged' ? 'Ranged' : 'Caster';
-    ctx.fillText(`${this.slotLabel(hero.playerId)}'s ${categoryIcon}  -  ${hero.kills} kills`, w / 2, y + fontSize * 2.8);
-
+    // Line 1: "WAR HERO" header with shield icon
+    const shieldSz = fontSize * 0.85;
     ctx.font = `bold ${fontSize * 0.75}px monospace`;
+    const headerTextW = ctx.measureText('WAR HERO').width;
+    const headerTotalW = shieldSz + gap * 0.5 + headerTextW;
+    const headerStartX = textCenterX - headerTotalW / 2;
+    this.ui.drawIcon(ctx, 'shield', headerStartX, line1Y - shieldSz * 0.7, shieldSz);
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#3e2c1a';
+    ctx.fillText('WAR HERO', headerStartX + shieldSz + gap * 0.5, line1Y);
+
+    // Line 2: Unit name in race color
+    ctx.font = `bold ${fontSize * 0.9}px monospace`;
+    ctx.textAlign = 'center';
+    ctx.fillStyle = this.darkenColor(raceColor, 0.55);
+    const heroName = this.truncateText(ctx, hero.name, textAvailW);
+    ctx.fillText(heroName, textCenterX, line2Y);
+
+    // Line 3: Owner + category
+    ctx.font = `bold ${fontSize * 0.65}px monospace`;
+    ctx.fillStyle = this.darkenColor(playerColor, 0.6);
+    const catLabel = hero.category === 'melee' ? 'Melee' : hero.category === 'ranged' ? 'Ranged' : 'Caster';
+    ctx.fillText(`${this.slotLabel(hero.playerId)}'s ${catLabel}`, textCenterX, line3Y);
+
+    // Line 4: Kills with sword icon
+    const killIconSz = fontSize * 0.65;
+    const killText = `${hero.kills} kills`;
+    ctx.font = `bold ${fontSize * 0.65}px monospace`;
+    const killTextW = ctx.measureText(killText).width;
+    const killTotalW = killIconSz + gap * 0.4 + killTextW;
+    const killStartX = textCenterX - killTotalW / 2;
+    this.ui.drawIcon(ctx, 'sword', killStartX, line4Y - killIconSz * 0.7, killIconSz);
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#3e2c1a';
+    ctx.fillText(killText, killStartX + killIconSz + gap * 0.4, line4Y);
+
+    // Line 5: Survival / death status
+    ctx.font = `${fontSize * 0.55}px monospace`;
+    ctx.textAlign = 'center';
     const aliveTime = this.formatTickTime((hero.deathTick ?? state.tick) - hero.spawnTick);
     if (hero.survived) {
       ctx.fillStyle = '#1b6e24';
-      ctx.fillText(`Survived the battle  (alive ${aliveTime})`, w / 2, y + fontSize * 3.8);
+      ctx.fillText(`Survived (${aliveTime})`, textCenterX, line5Y);
     } else {
       const deathTime = this.formatTickTime(hero.deathTick!);
       ctx.fillStyle = '#9a1a1a';
-      ctx.fillText(`Slain by ${hero.killedByName} at ${deathTime}  (alive ${aliveTime})`, w / 2, y + fontSize * 3.8);
+      const deathText = this.truncateText(ctx, `Slain at ${deathTime} (${aliveTime})`, textAvailW);
+      ctx.fillText(deathText, textCenterX, line5Y);
     }
   }
 

@@ -2,99 +2,38 @@ import { Scene, SceneManager } from './Scene';
 import { UIAssets } from '../rendering/UIAssets';
 import { BotDifficultyLevel } from '../simulation/BotAI';
 import { type MapDef } from '../simulation/types';
-import { ALL_MAPS } from '../simulation/maps';
+import { DUEL_MAP, SKIRMISH_MAP, WARZONE_MAP } from '../simulation/maps';
 
 interface DifficultyOption {
   level: BotDifficultyLevel;
   label: string;
   color: string;
   desc: string;
-  details: string[];
 }
 
-interface MapOption {
-  map: MapDef;
+interface ModeOption {
   label: string;
   color: string;
-  desc: string;
-  details: string[];
+  map: MapDef;
+  teamSize: number;
 }
 
 const DIFFICULTIES: DifficultyOption[] = [
-  {
-    level: BotDifficultyLevel.Easy,
-    label: 'EASY',
-    color: '#4caf50',
-    desc: 'Low-pressure practice',
-    details: [
-      'Bots expand slowly and rarely tech early',
-      'Nukes come late and lane choices are less focused',
-      'Best for learning races, builds, and controls',
-    ],
-  },
-  {
-    level: BotDifficultyLevel.Medium,
-    label: 'MEDIUM',
-    color: '#ffd740',
-    desc: 'Default challenge',
-    details: [
-      'Bots build, tech, and contest the map on time',
-      'They punish obvious greed but leave room to recover',
-      'The best baseline for normal matches',
-    ],
-  },
-  {
-    level: BotDifficultyLevel.Hard,
-    label: 'HARD',
-    color: '#ff9100',
-    desc: 'Punishes sloppy play',
-    details: [
-      'Bots push fast, tech early, and spend efficiently',
-      'They react to your lane plan and punish weak defenses',
-      'Bring a real opener and a backup plan',
-    ],
-  },
-  {
-    level: BotDifficultyLevel.Nightmare,
-    label: 'NIGHTMARE',
-    color: '#ff1744',
-    desc: 'Tournament pace',
-    details: [
-      'Bots use optimized race-specific builds and timings',
-      'Fast reactions, early nukes, and ruthless pressure',
-      'Built for players who already beat Hard consistently',
-    ],
-  },
+  { level: BotDifficultyLevel.Easy, label: 'EASY', color: '#4caf50', desc: 'Bots expand slowly and rarely punish' },
+  { level: BotDifficultyLevel.Medium, label: 'MEDIUM', color: '#ffd740', desc: 'Balanced challenge, room to recover' },
+  { level: BotDifficultyLevel.Hard, label: 'HARD', color: '#ff9100', desc: 'Fast pressure, punishes weak play' },
+  { level: BotDifficultyLevel.Nightmare, label: 'NIGHTMARE', color: '#ff1744', desc: 'Optimized builds, ruthless timing' },
 ];
 
-const MAP_OPTIONS: MapOption[] = ALL_MAPS.map((map) => {
-  if (map.id === 'skirmish') {
-    return {
-      map,
-      label: 'SKIRMISH',
-      color: '#66d9ef',
-      desc: 'Wide 3v3 battlefield',
-      details: [
-        'More room to eco, rotate, and recover',
-        'Best for bigger team fights and longer matches',
-      ],
-    };
-  }
-
-  return {
-    map,
-    label: 'DUEL',
-    color: '#ffd740',
-    desc: 'Compact 2v2 showdown',
-    details: [
-      'Short travel times and quick pressure windows',
-      'Best for fast matches and direct lane battles',
-    ],
-  };
-});
+const MODE_OPTIONS: ModeOption[] = [
+  { label: '1v1', color: '#66d9ef', map: DUEL_MAP, teamSize: 1 },
+  { label: '2v2', color: '#ffd740', map: DUEL_MAP, teamSize: 2 },
+  { label: '3v3', color: '#a6e22e', map: SKIRMISH_MAP, teamSize: 3 },
+  { label: '4v4', color: '#ff6e40', map: WARZONE_MAP, teamSize: 4 },
+];
 
 const LAST_DIFFICULTY_KEY = 'spawnwars.lastDifficulty';
-const LAST_MAP_KEY = 'spawnwars.lastMapId';
+const LAST_MODE_KEY = 'spawnwars.lastMode';
 
 function shadowText(
   ctx: CanvasRenderingContext2D, text: string, x: number, y: number,
@@ -106,43 +45,24 @@ function shadowText(
   ctx.fillText(text, x, y);
 }
 
-function wrapLines(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
-  const words = text.split(' ');
-  const lines: string[] = [];
-  let current = '';
-
-  for (const word of words) {
-    const next = current ? `${current} ${word}` : word;
-    if (current && ctx.measureText(next).width > maxWidth) {
-      lines.push(current);
-      current = word;
-    } else {
-      current = next;
-    }
-  }
-
-  if (current) lines.push(current);
-  return lines.length > 0 ? lines : [''];
-}
-
 export class DifficultySelectScene implements Scene {
   private manager: SceneManager;
   private canvas: HTMLCanvasElement;
   private ui: UIAssets;
-  private onConfirm: (level: BotDifficultyLevel, mapDef: MapDef) => void;
+  private onConfirm: (level: BotDifficultyLevel, mapDef: MapDef, teamSize: number) => void;
   private selectedIndex = 1;
   private hoverIndex = -1;
-  private mapHoverIndex = -1;
+  private modeIndex = 0;
+  private modeHoverIndex = -1;
   private tick = 0;
   private sceneAge = 0;
-  private mapIndex = 0;
 
   private clickHandler: ((e: MouseEvent) => void) | null = null;
   private moveHandler: ((e: MouseEvent) => void) | null = null;
   private keyHandler: ((e: KeyboardEvent) => void) | null = null;
   private touchHandler: ((e: TouchEvent) => void) | null = null;
 
-  constructor(manager: SceneManager, canvas: HTMLCanvasElement, ui: UIAssets, onConfirm: (level: BotDifficultyLevel, mapDef: MapDef) => void) {
+  constructor(manager: SceneManager, canvas: HTMLCanvasElement, ui: UIAssets, onConfirm: (level: BotDifficultyLevel, mapDef: MapDef, teamSize: number) => void) {
     this.manager = manager;
     this.canvas = canvas;
     this.ui = ui;
@@ -151,7 +71,7 @@ export class DifficultySelectScene implements Scene {
 
   enter(): void {
     this.hoverIndex = -1;
-    this.mapHoverIndex = -1;
+    this.modeHoverIndex = -1;
     this.loadSelections();
 
     this.keyHandler = (e) => {
@@ -166,7 +86,7 @@ export class DifficultySelectScene implements Scene {
       if (e.key === 'Tab' || e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
         e.preventDefault();
         const delta = e.key === 'ArrowLeft' ? -1 : 1;
-        this.mapIndex = (this.mapIndex + delta + MAP_OPTIONS.length) % MAP_OPTIONS.length;
+        this.modeIndex = (this.modeIndex + delta + MODE_OPTIONS.length) % MODE_OPTIONS.length;
         this.saveSelections();
       }
       if (e.key === 'Enter' || e.key === ' ') {
@@ -178,9 +98,9 @@ export class DifficultySelectScene implements Scene {
     this.clickHandler = (e) => {
       const [cx, cy] = this.toCanvas(e.clientX, e.clientY);
       if (this.isBackButtonAt(cx, cy)) { this.manager.switchTo('raceSelect'); return; }
-      const mapIdx = this.getMapCardIndexAt(cx, cy);
-      if (mapIdx >= 0) {
-        this.mapIndex = mapIdx;
+      const modeIdx = this.getModeButtonIndexAt(cx, cy);
+      if (modeIdx >= 0) {
+        this.modeIndex = modeIdx;
         this.saveSelections();
         return;
       }
@@ -198,7 +118,7 @@ export class DifficultySelectScene implements Scene {
     this.moveHandler = (e) => {
       const [cx, cy] = this.toCanvas(e.clientX, e.clientY);
       this.hoverIndex = this.getCardIndexAt(cx, cy);
-      this.mapHoverIndex = this.getMapCardIndexAt(cx, cy);
+      this.modeHoverIndex = this.getModeButtonIndexAt(cx, cy);
     };
 
     this.touchHandler = (e) => {
@@ -207,9 +127,9 @@ export class DifficultySelectScene implements Scene {
       if (!touch) return;
       const [cx, cy] = this.toCanvas(touch.clientX, touch.clientY);
       if (this.isBackButtonAt(cx, cy)) { this.manager.switchTo('raceSelect'); return; }
-      const mapIdx = this.getMapCardIndexAt(cx, cy);
-      if (mapIdx >= 0) {
-        this.mapIndex = mapIdx;
+      const modeIdx = this.getModeButtonIndexAt(cx, cy);
+      if (modeIdx >= 0) {
+        this.modeIndex = modeIdx;
         this.saveSelections();
         return;
       }
@@ -254,34 +174,82 @@ export class DifficultySelectScene implements Scene {
       const diffIndex = DIFFICULTIES.findIndex((diff) => diff.level === savedDifficulty);
       if (diffIndex >= 0) this.selectedIndex = diffIndex;
 
-      const savedMapId = localStorage.getItem(LAST_MAP_KEY);
-      const savedMapIndex = MAP_OPTIONS.findIndex((option) => option.map.id === savedMapId);
-      if (savedMapIndex >= 0) this.mapIndex = savedMapIndex;
+      const savedMode = localStorage.getItem(LAST_MODE_KEY);
+      const savedModeIndex = MODE_OPTIONS.findIndex((opt) => opt.label === savedMode);
+      if (savedModeIndex >= 0) this.modeIndex = savedModeIndex;
     } catch {}
   }
 
   private saveSelections(): void {
     try {
       localStorage.setItem(LAST_DIFFICULTY_KEY, DIFFICULTIES[this.selectedIndex].level);
-      localStorage.setItem(LAST_MAP_KEY, MAP_OPTIONS[this.mapIndex].map.id);
+      localStorage.setItem(LAST_MODE_KEY, MODE_OPTIONS[this.modeIndex].label);
     } catch {}
   }
 
   private confirmSelection(): void {
     this.saveSelections();
-    this.onConfirm(DIFFICULTIES[this.selectedIndex].level, MAP_OPTIONS[this.mapIndex].map);
+    const mode = MODE_OPTIONS[this.modeIndex];
+    this.onConfirm(DIFFICULTIES[this.selectedIndex].level, mode.map, mode.teamSize);
   }
 
-  private getMapCardLayout(): { x: number; y: number; w: number; h: number }[] {
-    const w = this.canvas.clientWidth;
-    const compact = this.compact;
-    const gap = compact ? 4 : 10;
-    const cardW = Math.min(w * 0.9, 420);
-    const cardH = compact ? 42 : 72;
-    const startX = (w - cardW) / 2;
-    const startY = compact ? 48 : 58;
+  // --- Mode buttons layout (horizontal row of 3) ---
 
-    return MAP_OPTIONS.map((_, i) => ({
+  private getModeButtonLayout(): { x: number; y: number; w: number; h: number }[] {
+    const w = this.canvas.clientWidth;
+    const h = this.canvas.clientHeight;
+    const compact = this.compact;
+    const totalW = Math.min(w * 0.9, 420);
+    const gap = compact ? 6 : 10;
+    const btnW = (totalW - gap * (MODE_OPTIONS.length - 1)) / MODE_OPTIONS.length;
+    const btnH = compact ? 34 : 44;
+    const startX = (w - totalW) / 2;
+
+    // Position halfway between ribbon bottom and difficulty cards top
+    const ribbonBottom = (compact ? 48 : 58) + 8;
+    const cardH = compact ? 38 : 48;
+    const cardGap = compact ? 4 : 8;
+    const totalCardsH = DIFFICULTIES.length * cardH + (DIFFICULTIES.length - 1) * cardGap;
+    const btnSpace = compact ? 56 : 80;
+    const cardsTop = ribbonBottom + btnH + (compact ? 8 : 14) + Math.max(0, (h - ribbonBottom - btnH - (compact ? 8 : 14) - btnSpace - totalCardsH) / 2);
+    const startY = ribbonBottom + (cardsTop - ribbonBottom - btnH) / 2;
+
+    return MODE_OPTIONS.map((_, i) => ({
+      x: startX + i * (btnW + gap),
+      y: startY,
+      w: btnW,
+      h: btnH,
+    }));
+  }
+
+  private getModeButtonIndexAt(cx: number, cy: number): number {
+    const btns = this.getModeButtonLayout();
+    const pad = 4;
+    for (let i = 0; i < btns.length; i++) {
+      const b = btns[i];
+      if (cx >= b.x - pad && cx <= b.x + b.w + pad && cy >= b.y - pad && cy <= b.y + b.h + pad) return i;
+    }
+    return -1;
+  }
+
+  // --- Difficulty card layout ---
+
+  private getCardLayout(): { x: number; y: number; w: number; h: number }[] {
+    const w = this.canvas.clientWidth;
+    const h = this.canvas.clientHeight;
+    const compact = this.compact;
+    const cardW = Math.min(w * 0.9, 420);
+    const gap = compact ? 4 : 8;
+    const modeBtns = this.getModeButtonLayout();
+    const modeBottom = modeBtns[0].y + modeBtns[0].h;
+    const topMargin = modeBottom + (compact ? 8 : 14);
+    const cardH = compact ? 38 : 48;
+    const totalH = DIFFICULTIES.length * cardH + (DIFFICULTIES.length - 1) * gap;
+    const btnSpace = compact ? 56 : 80;
+    const startY = topMargin + Math.max(0, (h - topMargin - btnSpace - totalH) / 2);
+    const startX = (w - cardW) / 2;
+
+    return DIFFICULTIES.map((_, i) => ({
       x: startX,
       y: startY + i * (cardH + gap),
       w: cardW,
@@ -289,78 +257,10 @@ export class DifficultySelectScene implements Scene {
     }));
   }
 
-  private getCardLayout(): { x: number; y: number; w: number; h: number }[] {
-    const w = this.canvas.clientWidth;
-    const h = this.canvas.clientHeight;
-    const compact = this.compact;
-    const cardW = Math.min(w * 0.9, 420);
-    const gap = compact ? 4 : 10;
-    const mapCards = this.getMapCardLayout();
-    const mapBottom = Math.max(...mapCards.map((card) => card.y + card.h));
-    const topMargin = mapBottom + (compact ? 6 : 14);
-    const heights = this.getDifficultyCardHeights(cardW);
-    const totalH = heights.reduce((sum, cardH) => sum + cardH, 0) + (DIFFICULTIES.length - 1) * gap;
-    const btnSpace = compact ? 56 : 80;
-    const startY = topMargin + Math.max(0, (h - topMargin - btnSpace - totalH) / 2);
-    const startX = (w - cardW) / 2;
-    let nextY = startY;
-
-    return DIFFICULTIES.map((_, i) => {
-      const card = {
-        x: startX,
-        y: nextY,
-        w: cardW,
-        h: heights[i],
-      };
-      nextY += heights[i] + gap;
-      return card;
-    });
-  }
-
-  private getDifficultyCardHeights(cardW: number): number[] {
-    const ctx = this.canvas.getContext('2d');
-    if (!ctx) return DIFFICULTIES.map(() => 104);
-    return DIFFICULTIES.map((diff, i) => this.measureDifficultyCardHeight(ctx, cardW, diff, i));
-  }
-
   private get compact(): boolean { return this.canvas.clientHeight < 700; }
-
-  private measureDifficultyCardHeight(ctx: CanvasRenderingContext2D, cardW: number, diff: DifficultyOption, index: number): number {
-    const compact = this.compact;
-    const padX = compact ? 10 : 14;
-    const textWidth = cardW - padX * 2;
-    const labelSize = compact ? 14 : 18;
-    const descSize = Math.max(9, labelSize * 0.65);
-    const bulletSize = compact ? 10 : 11;
-    const showDetails = !compact || index === this.selectedIndex;
-
-    ctx.font = `${descSize}px monospace`;
-    const descLines = wrapLines(ctx, diff.desc, textWidth);
-
-    let height = (compact ? 8 : 14) + labelSize + 6 + descLines.length * (descSize + 3);
-
-    if (showDetails) {
-      ctx.font = `${bulletSize}px monospace`;
-      const bulletLineCount = diff.details.reduce((sum, detail) => sum + wrapLines(ctx, detail, textWidth - 8).length, 0);
-      height += 6 + bulletLineCount * (bulletSize + 3);
-    }
-
-    height += compact ? 6 : 12;
-    return Math.max(compact ? 44 : 96, Math.ceil(height));
-  }
 
   private getCardIndexAt(cx: number, cy: number): number {
     const cards = this.getCardLayout();
-    const pad = 4;
-    for (let i = 0; i < cards.length; i++) {
-      const c = cards[i];
-      if (cx >= c.x - pad && cx <= c.x + c.w + pad && cy >= c.y - pad && cy <= c.y + c.h + pad) return i;
-    }
-    return -1;
-  }
-
-  private getMapCardIndexAt(cx: number, cy: number): number {
-    const cards = this.getMapCardLayout();
     const pad = 4;
     for (let i = 0; i < cards.length; i++) {
       const c = cards[i];
@@ -418,58 +318,40 @@ export class DifficultySelectScene implements Scene {
     ctx.fillStyle = '#fff';
     ctx.fillText('GAME SETTINGS', w / 2, ribbonY + ribbonH * 0.58);
 
-    const hintSize = Math.max(9, Math.min(w / 55, 12));
-    const mapCards = this.getMapCardLayout();
+    // --- Mode buttons (1v1 / 2v2 / 3v3) ---
+    const modeBtns = this.getModeButtonLayout();
+    for (let i = 0; i < MODE_OPTIONS.length; i++) {
+      const mode = MODE_OPTIONS[i];
+      const btn = modeBtns[i];
+      const isSelected = i === this.modeIndex;
+      const isHover = i === this.modeHoverIndex;
 
-    for (let i = 0; i < MAP_OPTIONS.length; i++) {
-      const option = MAP_OPTIONS[i];
-      const card = mapCards[i];
-      const isSelected = i === this.mapIndex;
-      const isHover = i === this.mapHoverIndex;
-
-      const bgPadX = Math.round(card.w * 0.075);
-      const bgPadY = Math.round(card.h * 0.075);
-      this.ui.drawWoodTable(ctx, card.x - bgPadX, card.y - bgPadY, card.w + bgPadX * 2, card.h + bgPadY * 2);
+      const bgPadX = Math.round(btn.w * 0.06);
+      const bgPadY = Math.round(btn.h * 0.06);
+      this.ui.drawWoodTable(ctx, btn.x - bgPadX, btn.y - bgPadY, btn.w + bgPadX * 2, btn.h + bgPadY * 2);
 
       if (isSelected) {
-        ctx.strokeStyle = option.color;
-        ctx.shadowColor = option.color;
-        ctx.shadowBlur = 14;
+        ctx.strokeStyle = mode.color;
+        ctx.shadowColor = mode.color;
+        ctx.shadowBlur = 12;
         ctx.lineWidth = 3;
-        ctx.strokeRect(card.x + 1, card.y + 1, card.w - 2, card.h - 2);
+        ctx.strokeRect(btn.x + 1, btn.y + 1, btn.w - 2, btn.h - 2);
         ctx.shadowBlur = 0;
       } else if (isHover) {
         ctx.strokeStyle = 'rgba(255,255,255,0.25)';
         ctx.lineWidth = 1;
-        ctx.strokeRect(card.x + 1, card.y + 1, card.w - 2, card.h - 2);
+        ctx.strokeRect(btn.x + 1, btn.y + 1, btn.w - 2, btn.h - 2);
       }
 
-      const compact = this.compact;
-      const padX = compact ? 8 : 12;
-      const leftX = card.x + padX;
-      const topY = card.y + (compact ? 4 : 8);
-      const labelSize = compact ? Math.max(10, Math.min(card.h * 0.3, 13)) : Math.max(11, Math.min(card.h * 0.22, 16));
+      const labelSize = this.compact ? 14 : 18;
       ctx.font = `bold ${labelSize}px monospace`;
-      ctx.textAlign = 'left';
-      shadowText(ctx, `${option.label} (${option.map.playersPerTeam}v${option.map.playersPerTeam})`, leftX, topY + labelSize, option.color, 'rgba(0,0,0,0.7)');
-
-      const descSize = Math.max(8, labelSize * 0.7);
-      ctx.font = `${descSize}px monospace`;
-      ctx.fillStyle = 'rgba(255,255,255,0.72)';
-      ctx.fillText(option.desc, leftX, topY + labelSize + descSize + (compact ? 2 : 4));
-
-      if (!compact) {
-        const detailSize = Math.max(8, Math.min(card.h * 0.14, 10));
-        ctx.font = `${detailSize}px monospace`;
-        for (let di = 0; di < option.details.length; di++) {
-          const y = topY + labelSize + descSize + 10 + (di + 1) * (detailSize + 2);
-          shadowText(ctx, `  ${option.details[di]}`, leftX, y, isSelected ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.58)', 'rgba(0,0,0,0.4)');
-        }
-      }
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      shadowText(ctx, mode.label, btn.x + btn.w / 2, btn.y + btn.h / 2, isSelected ? mode.color : 'rgba(255,255,255,0.7)', 'rgba(0,0,0,0.7)');
     }
 
+    // --- Difficulty cards (1-line each) ---
     const cards = this.getCardLayout();
-
     for (let i = 0; i < DIFFICULTIES.length; i++) {
       const diff = DIFFICULTIES[i];
       const card = cards[i];
@@ -477,7 +359,7 @@ export class DifficultySelectScene implements Scene {
       const isHover = i === this.hoverIndex;
 
       const bgPadX = Math.round(card.w * 0.075);
-      const bgPadY = Math.round(card.h * 0.075);
+      const bgPadY = Math.round(card.h * 0.06);
       this.ui.drawWoodTable(ctx, card.x - bgPadX, card.y - bgPadY, card.w + bgPadX * 2, card.h + bgPadY * 2);
 
       if (isSelected) {
@@ -496,39 +378,24 @@ export class DifficultySelectScene implements Scene {
       const compact = this.compact;
       const padX = compact ? 10 : 14;
       const leftX = card.x + padX;
-      const contentTop = card.y + (compact ? 4 : 10);
-      const labelSize = compact ? 14 : 18;
-      const textWidth = card.w - padX * 2;
+      const labelSize = compact ? 13 : 16;
+      const descSize = Math.max(9, labelSize * 0.7);
+
+      // Label on the left
       ctx.font = `bold ${labelSize}px monospace`;
       ctx.textAlign = 'left';
-      shadowText(ctx, diff.label, leftX, contentTop + labelSize, diff.color, 'rgba(0,0,0,0.7)');
+      ctx.textBaseline = 'middle';
+      shadowText(ctx, diff.label, leftX, card.y + card.h / 2, diff.color, 'rgba(0,0,0,0.7)');
 
-      const descSize = Math.max(9, labelSize * 0.65);
+      // Description to the right of label
+      const labelW = ctx.measureText(diff.label).width;
       ctx.font = `${descSize}px monospace`;
-      const descLines = wrapLines(ctx, diff.desc, textWidth);
-      let lineY = contentTop + labelSize + 6;
-      for (const line of descLines) {
-        shadowText(ctx, line, leftX, lineY + descSize, 'rgba(255,255,255,0.78)', 'rgba(0,0,0,0.5)');
-        lineY += descSize + 3;
-      }
-
-      const showDetails = !compact || isSelected;
-      if (showDetails) {
-        const bulletSize = compact ? 10 : 11;
-        ctx.font = `${bulletSize}px monospace`;
-        lineY += 3;
-        for (const detail of diff.details) {
-          const wrapped = wrapLines(ctx, detail, textWidth - 8);
-          for (let li = 0; li < wrapped.length; li++) {
-            const prefix = li === 0 ? '• ' : '  ';
-            shadowText(ctx, `${prefix}${wrapped[li]}`, leftX, lineY + bulletSize, isSelected ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.58)', 'rgba(0,0,0,0.4)');
-            lineY += bulletSize + 3;
-          }
-        }
-      }
+      ctx.textAlign = 'left';
+      ctx.fillStyle = isSelected ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.55)';
+      ctx.fillText(diff.desc, leftX + labelW + 12, card.y + card.h / 2);
 
       if (isSelected) {
-        const indW = 6;
+        const indW = 5;
         const indH = card.h * 0.5;
         const indY = card.y + (card.h - indH) / 2;
         ctx.fillStyle = diff.color;
@@ -536,15 +403,15 @@ export class DifficultySelectScene implements Scene {
       }
     }
 
-    // Bottom button row: BACK (left) + START (right) — matches race select sizing
+    // Bottom button row
     const { backX, startX, btnW, btnH, btnY } = this.getButtonRow();
-    const selColor = DIFFICULTIES[this.selectedIndex].color;
     const btnFontSize = this.compact ? 13 : 16;
     const rb = UIAssets.swordReveal(this.sceneAge, 0);
     const obx = this.ui.drawSword(ctx, backX, btnY, btnW, btnH, 4, rb);
     if (rb > 0) {
       ctx.font = `bold ${btnFontSize}px monospace`;
       ctx.textAlign = 'center';
+      ctx.textBaseline = 'alphabetic';
       ctx.globalAlpha = rb;
       const backTextX = backX + btnW * 0.52 + obx;
       ctx.fillStyle = 'rgba(0,0,0,0.5)';
@@ -554,11 +421,11 @@ export class DifficultySelectScene implements Scene {
       ctx.globalAlpha = 1;
     }
 
-    // START sword (blue variant 0)
     const rs = UIAssets.swordReveal(this.sceneAge, 1);
     const osx = this.ui.drawSword(ctx, startX, btnY, btnW, btnH, 0, rs);
     if (rs > 0) {
       ctx.font = `bold ${btnFontSize}px monospace`;
+      ctx.textBaseline = 'alphabetic';
       ctx.globalAlpha = rs;
       const startTextX = startX + btnW * 0.52 + osx;
       ctx.fillStyle = 'rgba(0,0,0,0.5)';
@@ -568,9 +435,11 @@ export class DifficultySelectScene implements Scene {
       ctx.globalAlpha = 1;
     }
 
+    const hintSize = Math.max(9, Math.min(w / 55, 12));
     const hintY = this.compact ? btnY + btnH + 8 : btnY + btnH + 14;
     ctx.font = `bold ${Math.max(9, hintSize)}px monospace`;
-    ctx.fillStyle = selColor;
-    ctx.fillText(`${DIFFICULTIES[this.selectedIndex].label}  •  ${MAP_OPTIONS[this.mapIndex].label}`, w / 2, hintY);
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillStyle = DIFFICULTIES[this.selectedIndex].color;
+    ctx.fillText(`${MODE_OPTIONS[this.modeIndex].label}  ${DIFFICULTIES[this.selectedIndex].label}`, w / 2, hintY);
   }
 }

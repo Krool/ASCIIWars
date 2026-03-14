@@ -2,6 +2,7 @@ import { Scene, SceneManager } from './Scene';
 import { SpriteLoader, drawSpriteFrame, getSpriteFrame } from '../rendering/SpriteLoader';
 import { UIAssets } from '../rendering/UIAssets';
 import { Race, BuildingType, TILE_SIZE } from '../simulation/types';
+import { loadProfile, checkNonMatchAchievement, ACHIEVEMENTS } from '../profile/ProfileData';
 import { UNIT_STATS, RACE_COLORS, UPGRADE_TREES, UpgradeNodeDef } from '../simulation/data';
 import { getUnitUpgradeMultipliers } from '../simulation/GameState';
 import { getElo, ELO_DEFAULT } from './TitleScene';
@@ -63,6 +64,11 @@ export class UnitGalleryScene implements Scene {
     this.scrollY = 0;
     this.animTime = 0;
     this.activeTab = 0;
+
+    // Track gallery visit achievement
+    const profile = loadProfile();
+    const achId = checkNonMatchAchievement(profile, 'gallery_visitor');
+    if (achId) { const def = ACHIEVEMENTS.find(a => a.id === achId); if (def) this.manager.showToast(`Achievement: ${def.name}`, def.desc); }
 
     this.clickHandler = (e: MouseEvent) => {
       const rect = this.canvas.getBoundingClientRect();
@@ -246,7 +252,7 @@ export class UnitGalleryScene implements Scene {
 
           // Anchor feet
           const feetY = unitCY + 20;
-          const drawX = unitCX - drawW / 2;
+          const drawX = unitCX - drawW * (def.anchorX ?? 0.5);
           const drawY = feetY - drawH * gY;
 
           // Animate

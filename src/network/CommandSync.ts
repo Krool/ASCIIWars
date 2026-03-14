@@ -120,6 +120,8 @@ export class CommandSync {
     set(ref(db, `${gameRef}/ready/${this.localSlotId}`), true).then(() => {
       this.status = `ready written, waiting=${this.allHumanSlots.filter(id => !this.readyPlayers.has(id)).join(',')}`;
       console.log(`[CommandSync] ${this.status}`);
+      // If no remote players (solo + bots), resolve immediately
+      this.checkAllReady();
     }).catch((err) => {
       this.status = `ready write FAILED: ${err.message}`;
       console.error(`[CommandSync] ${this.status}`);
@@ -255,18 +257,20 @@ export class CommandSync {
       }
     }
 
-    // Write to Firebase (fire-and-forget — don't await)
-    const db = getDb();
-    set(ref(db, `games/${this.partyCode}/turns/${turn}/${this.localSlotId}`), data).catch((err) => {
-      console.error(`[CommandSync] Failed to push turn ${turn}:`, err);
-    });
-    this.highestWrittenTurn = Math.max(this.highestWrittenTurn, turn);
+    // Only write to Firebase if there are remote players to sync with
+    if (this.remoteSlotIds.length > 0) {
+      const db = getDb();
+      set(ref(db, `games/${this.partyCode}/turns/${turn}/${this.localSlotId}`), data).catch((err) => {
+        console.error(`[CommandSync] Failed to push turn ${turn}:`, err);
+      });
+      this.highestWrittenTurn = Math.max(this.highestWrittenTurn, turn);
 
-    // Clean up old turns from Firebase
-    if (turn > TURN_CLEANUP_DELAY) {
-      const oldTurn = turn - TURN_CLEANUP_DELAY;
-      remove(ref(db, `games/${this.partyCode}/turns/${oldTurn}`)).catch(() => {});
-      this.turnBuffer.delete(oldTurn);
+      // Clean up old turns from Firebase
+      if (turn > TURN_CLEANUP_DELAY) {
+        const oldTurn = turn - TURN_CLEANUP_DELAY;
+        remove(ref(db, `games/${this.partyCode}/turns/${oldTurn}`)).catch(() => {});
+        this.turnBuffer.delete(oldTurn);
+      }
     }
   }
 

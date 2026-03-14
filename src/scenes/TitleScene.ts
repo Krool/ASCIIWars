@@ -4,11 +4,11 @@ import { SpriteLoader, drawSpriteFrame, drawGridFrame, getSpriteFrame } from '..
 import { Race, BuildingType, StatusType, StatusEffect, TICK_RATE } from '../simulation/types';
 import { UNIT_STATS, RACE_COLORS, UPGRADE_TREES } from '../simulation/data';
 import { getUnitUpgradeMultipliers } from '../simulation/GameState';
-import { PartyManager, PartyState, PartyPlayer, getPartyPlayerCount } from '../network/PartyManager';
+import { PartyManager, PartyState, PartyPlayer, getPartyPlayerCount, getActiveSlots } from '../network/PartyManager';
 import { isFirebaseConfigured, initFirebase } from '../network/FirebaseService';
-import { PlayerProfile, ALL_AVATARS, loadProfile } from '../profile/ProfileData';
+import { PlayerProfile, ALL_AVATARS, loadProfile, checkNonMatchAchievement, ACHIEVEMENTS } from '../profile/ProfileData';
 import { BotDifficultyLevel } from '../simulation/BotAI';
-import { getMapById, ALL_MAPS, DUEL_MAP } from '../simulation/maps';
+import { getMapById, DUEL_MAP } from '../simulation/maps';
 import { SoundManager } from '../audio/SoundManager';
 import { MusicPlayer } from '../audio/MusicPlayer';
 import { getAudioSettings, subscribeToAudioSettings, updateAudioSettings } from '../audio/AudioSettings';
@@ -21,6 +21,16 @@ const PARTY_DIFFICULTY_OPTIONS: { level: BotDifficultyLevel; label: string; colo
   { level: BotDifficultyLevel.Nightmare, label: 'NITE', color: '#ff1744' },
 ];
 
+function getModeName(teamSize: number): string {
+  switch (teamSize) {
+    case 1: return 'Duel (1v1)';
+    case 2: return 'Battle (2v2)';
+    case 3: return 'War (3v3)';
+    case 4: return 'Kooktown (4v4)';
+    default: return `${teamSize}v${teamSize}`;
+  }
+}
+
 // ─── Local party setup (no Firebase required) ───
 
 export interface LocalSetup {
@@ -32,6 +42,8 @@ export interface LocalSetup {
   botRaces?: { [slot: string]: string };
   playerSlot: number;
   playerRace: Race | 'random';
+  /** Players per team (1 = 1v1, 2 = 2v2). Default = map's playersPerTeam. */
+  teamSize?: number;
 }
 
 const LOCAL_SETUP_KEY = 'spawnwars.localSetup';
@@ -55,32 +67,65 @@ function loadLocalSetup(): LocalSetup | null {
 
 function createDefaultLocalSetup(): LocalSetup {
   const mapDef = DUEL_MAP;
-  const ppt = mapDef.playersPerTeam;
-  // Fill enemy team with Medium bots
+  // Default to 1v1: one bot on the enemy team's first slot
   const bots: { [slot: string]: string } = {};
-  for (let i = ppt; i < mapDef.maxPlayers; i++) {
-    bots[String(i)] = 'medium';
-  }
+  const enemyFirstSlot = mapDef.playersPerTeam; // slot 2 on duel map
+  bots[String(enemyFirstSlot)] = 'medium';
   return {
     mapId: mapDef.id,
     maxSlots: mapDef.maxPlayers,
     bots,
     playerSlot: 0,
     playerRace: 'random',
+    teamSize: 1,
   };
 }
 
-/** Check if each team has at least 1 occupied slot (player or bot). */
+/** Get locally-active slot indices for a local setup based on teamSize. */
+function getLocalActiveSlots(setup: LocalSetup): number[] {
+  const mapDef = getMapById(setup.mapId);
+  const teamSize = setup.teamSize ?? mapDef.playersPerTeam;
+  const slots: number[] = [];
+  for (let t = 0; t < mapDef.teams.length; t++) {
+    for (let s = 0; s < teamSize; s++) {
+      slots.push(t * mapDef.playersPerTeam + s);
+    }
+  }
+  return slots;
+}
+
+/** Check if each team has at least 1 occupied slot (player or bot) among active slots. */
 function canStartLocalSetup(setup: LocalSetup): boolean {
   const mapDef = getMapById(setup.mapId);
   const ppt = mapDef.playersPerTeam;
+  const teamSize = setup.teamSize ?? ppt;
   const teams = mapDef.teams.length;
   for (let t = 0; t < teams; t++) {
     const start = t * ppt;
-    const end = start + ppt;
+    const end = start + teamSize;
     let hasOccupant = false;
     for (let i = start; i < end; i++) {
       if (i === setup.playerSlot || setup.bots[String(i)]) {
+        hasOccupant = true;
+        break;
+      }
+    }
+    if (!hasOccupant) return false;
+  }
+  return true;
+}
+
+/** Check if each team has at least 1 occupant (human or bot) among active party slots. */
+function canStartParty(ps: PartyState): boolean {
+  const mapDef = getMapById(ps.mapId ?? 'duel');
+  const ppt = mapDef.playersPerTeam;
+  const teamSize = ps.teamSize ?? ppt;
+  for (let t = 0; t < mapDef.teams.length; t++) {
+    const start = t * ppt;
+    const end = start + teamSize;
+    let hasOccupant = false;
+    for (let i = start; i < end; i++) {
+      if (ps.players[String(i)] || ps.bots?.[String(i)]) {
         hasOccupant = true;
         break;
       }
@@ -630,8 +675,13 @@ function randomName(): string {
   return `${pre}${suf}`;
 }
 function loadPlayerName(): string {
-  try { return localStorage.getItem('spawnwars_name') || randomName(); }
-  catch { return randomName(); }
+  try {
+    const saved = localStorage.getItem('spawnwars_name');
+    if (saved) return saved;
+    const name = randomName();
+    savePlayerName(name);
+    return name;
+  } catch { return randomName(); }
 }
 function savePlayerName(name: string): void {
   try { localStorage.setItem('spawnwars_name', name); } catch {}
@@ -699,6 +749,7 @@ export class TitleScene implements Scene {
   private copyFeedbackTimer = 0;
   private matchmaking = false; // true while searching for a game
   private matchmakingDots = 0;
+  private connecting = false; // true while Firebase is initializing (custom game / find game)
   private joinCodeInput: string = '';
   private joinInputActive = false;
   private firebaseReady = false;
@@ -772,9 +823,12 @@ export class TitleScene implements Scene {
       this.menuMusic.startMenuMusic();
       this.musicPlayer.playMenu();
     };
+    let lastClickTime = 0;
     this.clickHandler = (e: MouseEvent) => {
       interactHandler();
       if (this.dragJustEnded) { this.dragJustEnded = false; return; }
+      // Suppress click if a touch just fired (Windows touch devices fire both)
+      if (Date.now() - lastClickTime < 300) return;
       const rect = this.canvas.getBoundingClientRect();
       const cx = e.clientX - rect.left;
       const cy = e.clientY - rect.top;
@@ -805,6 +859,7 @@ export class TitleScene implements Scene {
     this.touchHandler = (e: TouchEvent) => {
       e.preventDefault();
       interactHandler();
+      lastClickTime = Date.now();
       const touch = e.touches[0];
       if (!touch) return;
       const rect = this.canvas.getBoundingClientRect();
@@ -1037,7 +1092,7 @@ export class TitleScene implements Scene {
     start: { x: number; y: number; w: number; h: number };
     leave: { x: number; y: number; w: number; h: number };
     code: { x: number; y: number; w: number; h: number };
-    mapToggle: { x: number; y: number; w: number; h: number };
+    modeToggle: { x: number; y: number; w: number; h: number };
     diffBtns: { x: number; y: number; w: number; h: number }[];
   } {
     const w = this.canvas.clientWidth;
@@ -1063,11 +1118,11 @@ export class TitleScene implements Scene {
       });
     }
 
-    // Map toggle (host only, below code)
-    const mapTogW = panelW * 0.5;
-    const mapTogH = 24;
-    const mapTogX = px + (panelW - mapTogW) / 2;
+    // Single mode toggle (1v1 / 2v2 / 3v3)
+    const toggleW = panelW * 0.45;
+    const toggleH = 24;
     const mapTogY = py + panelH * 0.26;
+    const modeTogX = px + (panelW - toggleW) / 2;
 
     // Difficulty buttons (host only, between slots and start button)
     const dbtnW = panelW * 0.18;
@@ -1089,7 +1144,7 @@ export class TitleScene implements Scene {
       start: { x: px + panelW * 0.15, y: py + panelH - 56, w: panelW * 0.42, h: 44 },
       leave: { x: px + panelW * 0.60, y: py + panelH - 56, w: panelW * 0.28, h: 44 },
       code: { x: px + panelW * 0.125, y: py + 2, w: panelW * 0.75, h: 52 },
-      mapToggle: { x: mapTogX, y: mapTogY, w: mapTogW, h: mapTogH },
+      modeToggle: { x: modeTogX, y: mapTogY, w: toggleW, h: toggleH },
       diffBtns,
     };
   }
@@ -1099,7 +1154,7 @@ export class TitleScene implements Scene {
     slotRects: { x: number; y: number; w: number; h: number }[];
     start: { x: number; y: number; w: number; h: number };
     leave: { x: number; y: number; w: number; h: number };
-    mapToggle: { x: number; y: number; w: number; h: number };
+    modeToggle: { x: number; y: number; w: number; h: number };
   } {
     const w = this.canvas.clientWidth;
     const h = this.canvas.clientHeight;
@@ -1122,17 +1177,18 @@ export class TitleScene implements Scene {
       });
     }
 
-    const mapTogW = panelW * 0.5;
-    const mapTogH = 24;
-    const mapTogX = px + (panelW - mapTogW) / 2;
+    // Single mode toggle (1v1 / 2v2 / 3v3)
+    const toggleW = panelW * 0.45;
+    const toggleH = 24;
     const mapTogY = py + panelH * 0.12;
+    const modeTogX = px + (panelW - toggleW) / 2;
 
     return {
       panel: { x: px, y: py, w: panelW, h: panelH },
       slotRects,
       start: { x: px + panelW * 0.15, y: py + panelH - 56, w: panelW * 0.42, h: 44 },
       leave: { x: px + panelW * 0.60, y: py + panelH - 56, w: panelW * 0.28, h: 44 },
-      mapToggle: { x: mapTogX, y: mapTogY, w: mapTogW, h: mapTogH },
+      modeToggle: { x: modeTogX, y: mapTogY, w: toggleW, h: toggleH },
     };
   }
 
@@ -1199,8 +1255,10 @@ export class TitleScene implements Scene {
         return;
       }
       // Click non-player slots: sprite area (slotRect) = cycle race, below = cycle difficulty
+      const localActiveSet = new Set(getLocalActiveSlots(ls));
       for (let i = 0; i < ls.maxSlots; i++) {
         if (i === ls.playerSlot) continue;
+        if (!localActiveSet.has(i)) continue; // skip inactive slots
         const sr = pl.slotRects[i];
         if (!sr) continue;
         // Extended hit area: slot rect + 40px below for the difficulty/hint text
@@ -1219,9 +1277,9 @@ export class TitleScene implements Scene {
           return;
         }
       }
-      // Map toggle
-      if (this.hitRect(cx, cy, pl.mapToggle)) {
-        this.localSetupChangeMap();
+      // Mode toggle (1v1 / 2v2 / 3v3)
+      if (this.hitRect(cx, cy, pl.modeToggle)) {
+        this.localSetupCycleMode();
         return;
       }
       // Start button
@@ -1250,9 +1308,11 @@ export class TitleScene implements Scene {
         return;
       }
       // Host clicking non-local slots: cycle bot difficulty (Empty→Easy→Med→Hard→Nightmare→Empty)
+      const partyActiveSet = new Set(getActiveSlots(ps));
       if (isHost) {
         for (let i = 0; i < (ps.maxSlots ?? 4); i++) {
           if (i === localSlot) continue;
+          if (!partyActiveSet.has(i)) continue; // skip inactive slots
           if (pl.slotRects[i] && this.hitRect(cx, cy, pl.slotRects[i])) {
             const hasPlayer = !!ps.players[String(i)];
             if (!hasPlayer) {
@@ -1268,14 +1328,23 @@ export class TitleScene implements Scene {
           }
         }
       }
-      // Map toggle (host only)
-      if (isHost && this.hitRect(cx, cy, pl.mapToggle)) {
-        const currentMapId = this.partyState.mapId ?? 'duel';
-        const newMapId = currentMapId === 'duel' ? 'skirmish' : 'duel';
-        this.party?.updateMap(newMapId);
+      // Mode toggle (host only — cycle Duel → Battle → War)
+      if (isHost && this.hitRect(cx, cy, pl.modeToggle)) {
+        const mapDef = getMapById(this.partyState.mapId ?? 'duel');
+        const currentTS = this.partyState.teamSize ?? mapDef.playersPerTeam;
+        // Cycle: 1→2 (stay duel), 2→3 (skirmish), 3→4 (warzone), 4→1 (duel)
+        if (currentTS === 1) {
+          this.party?.updateTeamSize(2);
+        } else if (currentTS === 2) {
+          this.party?.updateMap('skirmish', 3);
+        } else if (currentTS === 3) {
+          this.party?.updateMap('warzone', 4);
+        } else {
+          this.party?.updateMap('duel', 1);
+        }
         return;
       }
-      if (isHost && this.hitRect(cx, cy, pl.start) && getPartyPlayerCount(this.partyState) >= 2) {
+      if (isHost && this.hitRect(cx, cy, pl.start) && canStartParty(this.partyState)) {
         this.party?.startGame();
         return;
       }
@@ -1334,7 +1403,7 @@ export class TitleScene implements Scene {
       }
       return;
     }
-    if (this.hitRect(cx, cy, btns.create)) {
+    if (this.hitRect(cx, cy, btns.create) && !this.connecting) {
       this.doCreateParty();
       return;
     }
@@ -1379,6 +1448,7 @@ export class TitleScene implements Scene {
 
   private async doFindGame(): Promise<void> {
     if (this.matchmaking) return;
+    this.connecting = true;
     this.matchmaking = true;
     this.matchmakingDots = 0;
     try {
@@ -1396,6 +1466,8 @@ export class TitleScene implements Scene {
       console.error('[Party] Find game failed:', e);
       this.showPartyError(e.message || 'Failed to find game');
       this.matchmaking = false;
+    } finally {
+      this.connecting = false;
     }
   }
 
@@ -1414,6 +1486,7 @@ export class TitleScene implements Scene {
   }
 
   private async doCreateParty(): Promise<void> {
+    this.connecting = true;
     try {
       await this.ensureFirebase();
       this.party!.localName = this.playerName;
@@ -1422,6 +1495,8 @@ export class TitleScene implements Scene {
       console.error('[Party] Create failed:', e);
       // Fall back to local setup if Firebase isn't available
       this.localSetup = loadLocalSetup() ?? createDefaultLocalSetup();
+    } finally {
+      this.connecting = false;
     }
   }
 
@@ -1469,28 +1544,49 @@ export class TitleScene implements Scene {
     saveLocalSetup(this.localSetup);
   }
 
-  private localSetupChangeMap(): void {
+  private localSetupCycleMode(): void {
     if (!this.localSetup) return;
-    const currentIdx = ALL_MAPS.findIndex(m => m.id === this.localSetup!.mapId);
-    const nextMap = ALL_MAPS[(currentIdx + 1) % ALL_MAPS.length];
+    const currentTS = this.localSetup.teamSize ?? 1;
+
+    // Cycle: 1v1 (duel) → 2v2 (duel) → 3v3 (skirmish) → 4v4 (warzone) → 1v1 (duel)
+    let newTS: number;
+    let newMapId: string;
+    if (currentTS === 1) {
+      newTS = 2; newMapId = 'duel';
+    } else if (currentTS === 2) {
+      newTS = 3; newMapId = 'skirmish';
+    } else if (currentTS === 3) {
+      newTS = 4; newMapId = 'warzone';
+    } else {
+      newTS = 1; newMapId = 'duel';
+    }
+
+    const nextMap = getMapById(newMapId);
     const ppt = nextMap.playersPerTeam;
 
-    // Resolve player slot first (may shrink if new map has fewer slots)
+    // Resolve player slot (may need to move if map changed)
     let playerSlot = this.localSetup.playerSlot;
     if (playerSlot >= nextMap.maxPlayers) playerSlot = 0;
     const playerTeam = Math.floor(playerSlot / ppt);
 
-    // Rebuild bots for new map
+    // Build active slot set
+    const newActiveSet = new Set<number>();
+    for (let t = 0; t < nextMap.teams.length; t++) {
+      for (let s = 0; s < newTS; s++) {
+        newActiveSet.add(t * ppt + s);
+      }
+    }
+
+    // Rebuild bots for new mode
     const oldBots = { ...this.localSetup.bots };
     const bots: { [slot: string]: string } = {};
-
     for (let i = 0; i < nextMap.maxPlayers; i++) {
-      if (i === playerSlot) continue; // never overwrite the player's slot
+      if (i === playerSlot) continue;
+      if (!newActiveSet.has(i)) continue;
       const slotTeam = Math.floor(i / ppt);
       if (oldBots[String(i)]) {
         bots[String(i)] = oldBots[String(i)];
       } else if (slotTeam !== playerTeam) {
-        // Enemy team: fill with Medium by default
         bots[String(i)] = BotDifficultyLevel.Medium;
       }
     }
@@ -1502,17 +1598,23 @@ export class TitleScene implements Scene {
       if (bots[slot]) botRaces[slot] = race;
     }
 
+    // If player is in an inactive slot, move to first active slot on their team
+    if (!newActiveSet.has(playerSlot)) {
+      const myTeamSlots = [...newActiveSet].filter(s => Math.floor(s / ppt) === playerTeam);
+      playerSlot = myTeamSlots[0] ?? 0;
+    }
+
     this.localSetup = {
-      mapId: nextMap.id,
+      mapId: newMapId,
       maxSlots: nextMap.maxPlayers,
       bots,
       botRaces: Object.keys(botRaces).length > 0 ? botRaces : undefined,
       playerSlot,
       playerRace: this.localSetup.playerRace,
+      teamSize: newTS,
     };
     saveLocalSetup(this.localSetup);
   }
-
 
   private async doJoinParty(): Promise<void> {
     if (this.joinCodeInput.length < 4) return;
@@ -1743,6 +1845,17 @@ export class TitleScene implements Scene {
         this.deadUnits = allUnits.filter(u => !u.alive);
         this.deathFade = 1;
         this.winnerLeaving = true;
+
+        // Track duel completion for achievements
+        if (this.profile) {
+          for (const duelAchId of ['duel_watcher', 'duel_fan', 'duel_addict']) {
+            const unlocked = checkNonMatchAchievement(this.profile, duelAchId);
+            if (unlocked) {
+              const def = ACHIEVEMENTS.find(a => a.id === unlocked);
+              if (def) this.manager.showToast(`Achievement: ${def.name}`, def.desc);
+            }
+          }
+        }
       }
     }
   }
@@ -2054,10 +2167,19 @@ export class TitleScene implements Scene {
       if (r1 > 0) this.drawSwordLabel(ctx, btns.findGame, 'FIND GAME', r1, ox1);
     }
 
-    // CUSTOM GAME — yellow sword
+    // CUSTOM GAME — yellow sword (show connecting feedback)
     const r2 = r(2);
-    const ox2 = this.ui.drawSword(ctx, btns.create.x, btns.create.y, btns.create.w, btns.create.h, 2, r2);
-    if (r2 > 0) this.drawSwordLabel(ctx, btns.create, 'CUSTOM GAME', r2, ox2);
+    if (this.connecting && !this.matchmaking) {
+      ctx.shadowColor = '#ffd740';
+      ctx.shadowBlur = 10 * (0.3 + 0.3 * Math.sin(this.pulseTime / 300));
+      const ox2 = this.ui.drawSword(ctx, btns.create.x, btns.create.y, btns.create.w, btns.create.h, 2, r2);
+      ctx.shadowBlur = 0;
+      const dots = '.'.repeat(Math.floor((this.pulseTime / 200) % 4));
+      if (r2 > 0) this.drawSwordLabel(ctx, btns.create, `CONNECTING${dots}`, (0.6 + 0.4 * Math.sin(this.pulseTime / 300)) * r2, ox2);
+    } else {
+      const ox2 = this.ui.drawSword(ctx, btns.create.x, btns.create.y, btns.create.w, btns.create.h, 2, r2);
+      if (r2 > 0) this.drawSwordLabel(ctx, btns.create, 'CUSTOM GAME', r2, ox2);
+    }
 
     // JOIN PARTY — purple sword
     const r3 = r(3);
@@ -2128,14 +2250,16 @@ export class TitleScene implements Scene {
     if (this.profile) {
       const avatarDef = ALL_AVATARS.find(a => a.id === this.profile!.avatarId);
       if (avatarDef) {
-        const sprData = this.sprites.getUnitSprite(avatarDef.race, avatarDef.category, 0);
+        const sprData = this.sprites.getUnitSprite(avatarDef.race, avatarDef.category, 0, false, avatarDef.upgradeNode);
         if (sprData) {
           const [img, def] = sprData;
           const frame = getSpriteFrame(Math.floor(this.pulseTime / 50), def);
           const aspect = def.frameW / def.frameH;
           const sprInset = 4;
           const sprSize = avatarSize - sprInset * 2;
-          const drawH = sprSize;
+          // Apply sprite scale so avatars match in-game relative sizes
+          const sprScale = def.scale ?? 1.0;
+          const drawH = sprSize * sprScale;
           const drawW = drawH * aspect;
           const gY = def.groundY ?? 0.71;
           const feetY = avatarY + avatarSize - sprInset - 2;
@@ -2251,27 +2375,29 @@ export class TitleScene implements Scene {
     ctx.fillStyle = '#fff';
     ctx.fillText('GAME SETUP', w / 2, headerY + headerH * 0.5);
 
-    // Map toggle
+    // Mode toggle (1v1 / 2v2 / 3v3)
     {
-      const mt = pl.mapToggle;
-      const mapLabel = ls.mapId === 'skirmish' ? 'SKIRMISH (3v3)' : 'DUEL (2v2)';
+      const mt = pl.modeToggle;
+      const ts = ls.teamSize ?? mapDef.playersPerTeam;
+      const modeLabel = getModeName(ts);
       ctx.fillStyle = 'rgba(0,0,0,0.25)';
       ctx.fillRect(mt.x, mt.y, mt.w, mt.h);
-      ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+      ctx.strokeStyle = 'rgba(255,215,64,0.3)';
       ctx.lineWidth = 1;
       ctx.strokeRect(mt.x, mt.y, mt.w, mt.h);
       const mtFontSize = Math.max(8, mt.h * 0.5);
       ctx.font = `bold ${mtFontSize}px monospace`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillStyle = '#fff';
-      ctx.fillText(`MAP: ${mapLabel}`, mt.x + mt.w / 2, mt.y + mt.h / 2);
-      ctx.fillStyle = 'rgba(255,255,255,0.6)';
+      ctx.fillStyle = '#ffd740';
+      ctx.fillText(`MODE: ${modeLabel}`, mt.x + mt.w / 2, mt.y + mt.h / 2);
+      ctx.fillStyle = 'rgba(255,215,64,0.6)';
       ctx.fillText('<', mt.x + 10, mt.y + mt.h / 2);
       ctx.fillText('>', mt.x + mt.w - 10, mt.y + mt.h / 2);
     }
 
     // Team color backgrounds
+    const activeSlots = new Set(getLocalActiveSlots(ls));
     const colW = pl.panel.w / maxSlots;
     const teamColors = ['rgba(50,100,220,0.12)', 'rgba(220,50,50,0.12)'];
     const teamBorderColors = ['rgba(80,140,255,0.35)', 'rgba(255,80,80,0.35)'];
@@ -2323,8 +2449,11 @@ export class TitleScene implements Scene {
       const slotRect = pl.slotRects[i];
       const isPlayer = i === ls.playerSlot;
       const botDiff = ls.bots[String(i)] ?? null;
+      const isActive = activeSlots.has(i);
 
       if (this.isDragging && this.dragSlot === i) ctx.globalAlpha = 0.3;
+      // Dim inactive slots
+      if (!isActive) ctx.globalAlpha = 0.15;
 
       if (isPlayer) {
         const slotCx = pl.panel.x + colW * i + colW / 2;
@@ -2406,13 +2535,15 @@ export class TitleScene implements Scene {
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillStyle = 'rgba(255,255,255,0.2)';
-        ctx.fillText('EMPTY', slotCx, slotY);
-        ctx.font = `${Math.max(7, fontSize * 0.55)}px monospace`;
-        ctx.fillStyle = 'rgba(255,255,255,0.3)';
-        ctx.fillText('click to add bot', slotCx, slotY + fontSize * 1.3);
+        ctx.fillText(isActive ? 'EMPTY' : '—', slotCx, slotY);
+        if (isActive) {
+          ctx.font = `${Math.max(7, fontSize * 0.55)}px monospace`;
+          ctx.fillStyle = 'rgba(255,255,255,0.3)';
+          ctx.fillText('click to add bot', slotCx, slotY + fontSize * 1.3);
+        }
       }
 
-      if (this.isDragging && this.dragSlot === i) ctx.globalAlpha = 1;
+      if ((this.isDragging && this.dragSlot === i) || !isActive) ctx.globalAlpha = 1;
 
       // Divider lines within same team
       if (i > 0 && i % playersPerTeam !== 0) {
@@ -2538,35 +2669,32 @@ export class TitleScene implements Scene {
       ctx.fillText('tap code to copy', w / 2, codeRibY + codeRibH + 8);
     }
 
-    // Map toggle (host only)
+    // Mode toggle (1v1 / 2v2 / 3v3 — host only)
     {
-      const mt = pl.mapToggle;
-      const mapId = ps.mapId ?? 'duel';
-      const mapLabel = mapId === 'skirmish' ? 'SKIRMISH (3v3)' : 'DUEL (2v2)';
-      // Background
+      const mt = pl.modeToggle;
+      const mapDef2 = getMapById(ps.mapId ?? 'duel');
+      const ts = ps.teamSize ?? mapDef2.playersPerTeam;
+      const modeLabel = getModeName(ts);
       ctx.fillStyle = 'rgba(0,0,0,0.25)';
       ctx.fillRect(mt.x, mt.y, mt.w, mt.h);
-      ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+      ctx.strokeStyle = 'rgba(255,215,64,0.3)';
       ctx.lineWidth = 1;
       ctx.strokeRect(mt.x, mt.y, mt.w, mt.h);
-
-      // Label
       const mtFontSize = Math.max(8, mt.h * 0.5);
       ctx.font = `bold ${mtFontSize}px monospace`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillStyle = '#fff';
-      ctx.fillText(`MAP: ${mapLabel}`, mt.x + mt.w / 2, mt.y + mt.h / 2);
-
-      // Arrows if host
+      ctx.fillStyle = '#ffd740';
+      ctx.fillText(`MODE: ${modeLabel}`, mt.x + mt.w / 2, mt.y + mt.h / 2);
       if (isHost) {
-        ctx.fillStyle = 'rgba(255,255,255,0.6)';
+        ctx.fillStyle = 'rgba(255,215,64,0.6)';
         ctx.fillText('<', mt.x + 10, mt.y + mt.h / 2);
         ctx.fillText('>', mt.x + mt.w - 10, mt.y + mt.h / 2);
       }
     }
 
     // Team color backgrounds behind slot groups
+    const partyActiveSlots = new Set(getActiveSlots(ps));
     const colW = pl.panel.w / maxSlots;
     const localSlot = this.party?.localSlotIndex ?? 0;
     const mapDef = getMapById(ps.mapId ?? 'duel');
@@ -2623,8 +2751,10 @@ export class TitleScene implements Scene {
       const slotRect = pl.slotRects[i];
       const botDiff = ps.bots?.[String(i)] ?? null;
 
-      // Dim slot if being dragged
+      const isSlotActive = partyActiveSlots.has(i);
+      // Dim slot if being dragged or inactive
       if (this.isDragging && this.dragSlot === i) ctx.globalAlpha = 0.3;
+      else if (!isSlotActive) ctx.globalAlpha = 0.15;
 
       if (player) {
         const isSlotHost = i === 0;
@@ -2648,7 +2778,7 @@ export class TitleScene implements Scene {
         ctx.fillStyle = diffColor;
         ctx.fillText(diffLabel, slotCx, slotY + fontSize * 1.3);
 
-        if (isHost) {
+        if (isHost && isSlotActive) {
           ctx.font = `${Math.max(7, fontSize * 0.55)}px monospace`;
           ctx.fillStyle = 'rgba(255,255,255,0.35)';
           ctx.fillText('click to change', slotCx, slotY + fontSize * 2.3);
@@ -2661,15 +2791,15 @@ export class TitleScene implements Scene {
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillStyle = 'rgba(255,255,255,0.2)';
-        ctx.fillText('EMPTY', slotCx, slotY);
-        if (isHost) {
+        ctx.fillText(isSlotActive ? 'EMPTY' : '—', slotCx, slotY);
+        if (isHost && isSlotActive) {
           ctx.font = `${Math.max(7, fontSize * 0.55)}px monospace`;
           ctx.fillStyle = 'rgba(255,255,255,0.3)';
           ctx.fillText('click to add bot', slotCx, slotY + fontSize * 1.3);
         }
       }
 
-      if (this.isDragging && this.dragSlot === i) ctx.globalAlpha = 1;
+      if ((this.isDragging && this.dragSlot === i) || !isSlotActive) ctx.globalAlpha = 1;
 
       // Divider lines between slots within same team
       if (i > 0 && i !== playersPerTeam) {
@@ -2705,7 +2835,7 @@ export class TitleScene implements Scene {
 
     // START button (host only, enabled when 2+ players)
     if (isHost) {
-      const canStart = getPartyPlayerCount(ps) >= 2;
+      const canStart = canStartParty(ps);
       ctx.globalAlpha = canStart ? 1 : 0.4;
       this.ui.drawSword(ctx, pl.start.x, pl.start.y, pl.start.w, pl.start.h, canStart ? 0 : 4); // blue or dark
       const startFontSize = Math.max(10, Math.min(pl.start.h * 0.35, 16));

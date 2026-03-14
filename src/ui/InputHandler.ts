@@ -93,6 +93,8 @@ export class InputHandler {
 
   /** Called when the player taps "Quit Game" in the settings panel. */
   onQuitGame: (() => void) | null = null;
+  /** Called when the player taps "Concede" in the settings panel (solo only). */
+  onConcede: (() => void) | null = null;
 
   constructor(game: Game, canvas: HTMLCanvasElement, camera: Camera, ui?: UIAssets, sprites?: SpriteLoader) {
     this.game = game;
@@ -467,7 +469,7 @@ export class InputHandler {
       const cy = (alley.y + this.game.state.mapDef.towerAlleyRows / 2) * TILE_SIZE;
       this.camera.panTo(cx, cy, 1.8);
     } else {
-      const origin = getBuildGridOrigin(this.pid, this.game.state.mapDef);
+      const origin = getBuildGridOrigin(this.pid, this.game.state.mapDef, this.game.state.players);
       const cx = (origin.x + this.game.state.mapDef.buildGridCols / 2) * TILE_SIZE;
       const cy = (origin.y + this.game.state.mapDef.buildGridRows / 2) * TILE_SIZE;
       this.camera.panTo(cx, cy, 1.8);
@@ -476,7 +478,7 @@ export class InputHandler {
 
   /** Pan camera to the harvester hut area */
   private panToHutArea(): void {
-    const origin = getHutGridOrigin(this.pid, this.game.state.mapDef);
+    const origin = getHutGridOrigin(this.pid, this.game.state.mapDef, this.game.state.players);
     const cx = (origin.x + this.game.state.mapDef.hutGridCols / 2) * TILE_SIZE;
     const cy = (origin.y + this.game.state.mapDef.hutGridRows / 2) * TILE_SIZE;
     this.camera.panTo(cx, cy, 1.8);
@@ -497,7 +499,7 @@ export class InputHandler {
     }
 
     // Military grid
-    const origin = getBuildGridOrigin(playerId, this.game.state.mapDef);
+    const origin = getBuildGridOrigin(playerId, this.game.state.mapDef, this.game.state.players);
     const gx = tx - origin.x, gy = ty - origin.y;
     if (gx < 0 || gx >= this.game.state.mapDef.buildGridCols || gy < 0 || gy >= this.game.state.mapDef.buildGridRows) return null;
     return { gx, gy, isAlley: false };
@@ -897,7 +899,8 @@ export class InputHandler {
       const sr = this.getSettingsButtonRect();
       const sx = sr.x + sr.w - 200;
       const sy = sr.y + sr.h + 4;
-      if (cx < sx || cx >= sx + 200 || cy < sy || cy >= sy + 358) {
+      const panelH = this.onConcede ? 394 : 358;
+      if (cx < sx || cx >= sx + 200 || cy < sy || cy >= sy + panelH) {
         this.settingsOpen = false;
         return true;
       }
@@ -906,7 +909,7 @@ export class InputHandler {
         this.settingsOpen = false;
         return true;
       }
-      if (cx >= sx && cx < sx + 200 && cy >= sy && cy < sy + 358) {
+      if (cx >= sx && cx < sx + 200 && cy >= sy && cy < sy + panelH) {
         if (cy >= sy + 34 && cy < sy + 58) {
           this.laneToggleMode = this.laneToggleMode === 'double' ? 'single' : 'double';
           this.saveLaneMode();
@@ -942,7 +945,16 @@ export class InputHandler {
         if (cy >= sy + 290 && cy < sy + 314) {
           this.resetUiDefaults();
         }
-        if (cy >= sy + 326 && cy < sy + 350) {
+        // Concede + Quit — positions shift when concede is present
+        let actionY = 326;
+        if (this.onConcede) {
+          if (cy >= sy + actionY && cy < sy + actionY + 24) {
+            this.settingsOpen = false;
+            this.onConcede();
+          }
+          actionY += 36;
+        }
+        if (cy >= sy + actionY && cy < sy + actionY + 24) {
           this.settingsOpen = false;
           this.onQuitGame?.();
         }
@@ -1293,9 +1305,10 @@ export class InputHandler {
       const sx = sr.x + sr.w - 200;
       const sy = sr.y + sr.h + 4;
       // Settings container - WoodTable 9-slice
-      if (!this.ui.drawWoodTable(ctx, sx, sy, 200, 358)) {
+      const panelH = this.onConcede ? 394 : 358;
+      if (!this.ui.drawWoodTable(ctx, sx, sy, 200, panelH)) {
         ctx.fillStyle = 'rgba(0,0,0,0.88)';
-        ctx.fillRect(sx, sy, 200, 358);
+        ctx.fillRect(sx, sy, 200, panelH);
       }
       ctx.fillStyle = '#fff';
       ctx.font = 'bold 12px monospace';
@@ -1399,14 +1412,28 @@ export class InputHandler {
       ctx.font = 'bold 12px monospace';
       ctx.fillText('Reset Defaults', sx + 16, sy + 306);
 
+      let actionY = 326;
+
+      // Concede button (solo only)
+      if (this.onConcede) {
+        ctx.fillStyle = 'rgba(80,60,10,0.9)';
+        ctx.fillRect(sx + 8, sy + actionY, 184, 24);
+        ctx.strokeStyle = '#ffa726';
+        ctx.strokeRect(sx + 8, sy + actionY, 184, 24);
+        ctx.fillStyle = '#ffa726';
+        ctx.font = 'bold 12px monospace';
+        ctx.fillText('Concede Match', sx + 16, sy + actionY + 16);
+        actionY += 36;
+      }
+
       // Quit Game button
       ctx.fillStyle = 'rgba(80,20,20,0.9)';
-      ctx.fillRect(sx + 8, sy + 326, 184, 24);
+      ctx.fillRect(sx + 8, sy + actionY, 184, 24);
       ctx.strokeStyle = '#ff5252';
-      ctx.strokeRect(sx + 8, sy + 326, 184, 24);
+      ctx.strokeRect(sx + 8, sy + actionY, 184, 24);
       ctx.fillStyle = '#ff5252';
       ctx.font = 'bold 12px monospace';
-      ctx.fillText('Quit Game', sx + 16, sy + 342);
+      ctx.fillText('Quit Game', sx + 16, sy + actionY + 16);
     }
 
     // Building popup (in-world)
@@ -1844,7 +1871,7 @@ export class InputHandler {
 
     // Highlight hut grid for miner
     if (isHut) {
-      const origin = getHutGridOrigin(this.pid, this.game.state.mapDef);
+      const origin = getHutGridOrigin(this.pid, this.game.state.mapDef, this.game.state.players);
       const myHuts = this.game.state.buildings.filter(b => b.playerId === this.pid && b.type === BuildingType.HarvesterHut);
       const occupiedSlots = new Set(myHuts.map(b => b.gridX));
       const hutCols = this.game.state.mapDef.hutGridCols;
@@ -1884,7 +1911,7 @@ export class InputHandler {
 
     // Highlight military grid slots (for non-tower, non-hut types)
     if (!isTower && !isHut) {
-      const origin = getBuildGridOrigin(this.pid, this.game.state.mapDef);
+      const origin = getBuildGridOrigin(this.pid, this.game.state.mapDef, this.game.state.players);
       for (let gy = 0; gy < this.game.state.mapDef.buildGridRows; gy++) {
         for (let gx = 0; gx < this.game.state.mapDef.buildGridCols; gx++) {
           const wx = (origin.x + gx) * TILE_SIZE;
@@ -2015,7 +2042,7 @@ export class InputHandler {
     if (!this.hoveredGridSlot) return;
     const slot = this.hoveredGridSlot;
 
-    const origin = slot.isAlley ? getTeamAlleyOrigin(this.myTeam, this.game.state.mapDef) : getBuildGridOrigin(this.pid, this.game.state.mapDef);
+    const origin = slot.isAlley ? getTeamAlleyOrigin(this.myTeam, this.game.state.mapDef) : getBuildGridOrigin(this.pid, this.game.state.mapDef, this.game.state.players);
     const worldX = (origin.x + slot.gx) * TILE_SIZE;
     const worldY = (origin.y + slot.gy) * TILE_SIZE;
 

@@ -6,20 +6,20 @@
 Spawn Wars
 
 ## High Concept
-A real-time 2v2 lane autobattler on a vertical scrolling battlefield. Players build spawn buildings on a base grid. Units automatically march toward the enemy base, splitting left or right around a central diamond obstacle. Players win either by destroying the enemy HQ or by mining and returning a single unique diamond to their HQ.
+A real-time lane autobattler supporting 1v1, 2v2, 3v3, and 4v4 modes. Players build spawn buildings on a base grid. Units automatically march toward the enemy base, splitting left or right around a central diamond obstacle. Players win either by destroying the enemy HQ or by mining and returning a single unique diamond to their HQ.
 
 ## Platform and Presentation
 
 - **Platform:** Web app first (desktop browsers), iOS and Android later.
 - **Screen orientation:** Vertical (portrait), one-hand friendly on mobile.
-- **Art:** ASCII art rendered in a monospace grid. Units are multi-character sprites (2x2 to 4x4 character blocks). Readability first: outline separation, z-order layering, optional colored accents.
+- **Art:** Sprite-based rendering on HTML5 Canvas using Tiny Swords and character sprite packs. Readability first: outline separation, z-order layering, colored accents per race.
 - **Color:** Used intentionally for clarity and appeal, with colorblind-safe alternatives (icons, patterns, shape coding). Each race has a primary and secondary accent color.
 - **Target resolution:** 360x640 logical pixels minimum (mobile), scales up for desktop.
 - **Target frame rate:** 60 FPS rendering, simulation at 20 ticks/second.
 
 ## Core Pillars
 
-1. Readable lane pressure and teamwork in 2v2
+1. Readable lane pressure and teamwork across 1v1 to 4v4
 2. Simple build decisions with meaningful branching upgrades
 3. Strategic resource risk: safe income vs. contested center
 4. Big save moments via nukes and diamond steals
@@ -29,14 +29,14 @@ A real-time 2v2 lane autobattler on a vertical scrolling battlefield. Players bu
 
 ## Game Mode and Match Rules
 
-### Default Mode
-- 2v2 is the default and primary mode.
+### Game Modes
+- **1v1** — Solo duel on the portrait Duel map. Build grids are centered.
+- **2v2** — Default team mode on the portrait Duel map. Teammates share an HQ.
+- **3v3** — Large battles on the landscape Skirmish map. 3 bases stacked per side.
+- **4v4** — Massive battles on the Warzone map.
 - Teams share one HQ health pool. If HQ dies, team loses.
-- Player perspective is always bottom-up (your base at bottom, enemy at top).
+- Player perspective is always bottom-up (your base at bottom, enemy at top) on portrait maps, or left-to-right on landscape maps.
 - **Match duration target:** 8-15 minutes average.
-
-### Optional Modes (Post-MVP)
-- 1v1, 2v AI, 1v AI.
 
 ### MVP Requirement
 Support bots as teammate and/or opponent, with difficulty variants later.

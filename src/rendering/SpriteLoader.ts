@@ -306,9 +306,11 @@ import uiIconMeat from '../assets/images/Tiny Swords (Free Pack)/Tiny Swords (Fr
 // ============================================================
 // PROJECTILE SPRITES
 // ============================================================
-// Arrows (Crown ranged — per team color)
+// Arrows (ranged units — per team color)
 import arrowBlue from '../assets/images/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Blue Units/Archer/Arrow.png?url';
 import arrowRed from '../assets/images/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Red Units/Archer/Arrow.png?url';
+// Bone projectile (Wild Bonechucker)
+import gnollBone from '../assets/images/Tiny Swords (Enemy Pack)/Tiny Swords (Enemy Pack)/Enemy Pack/Gnoll/Gnoll_Bone.png?url';
 // Orbs — small 32px (6x5 grid, 288x240, 48x48/frame) for Goblins & Oozlings
 import orbYellowSm from '../assets/images/OVERBURN AssetPack/OVERBURN AssetPack/00 Yellow-Orange FX/FX_Fire00_Orb32px_Short_Full_6x5.png?url';
 import orbBlueSm from '../assets/images/OVERBURN AssetPack/OVERBURN AssetPack/01 Blue FX/FX_Fire01_Orb32px_Short_Full_6x5.png?url';
@@ -349,6 +351,62 @@ import fxDust from '../assets/images/Tiny Swords (Free Pack)/Tiny Swords (Free P
 import fxNukeShockwave from '../assets/images/OVERBURN AssetPack/OVERBURN AssetPack/00 Yellow-Orange FX/FX_Fire00_ShockWave_6x4.png?url';
 
 // ============================================================
+// NEW UPGRADE PATH SPRITES
+// ============================================================
+// --- Kings and Pigs (strip format, frameW×frameH in filename) ---
+import kingHumanRun from '../assets/images/Kings and Pigs/Sprites/01-King Human/Run (78x58).png?url';
+import kingHumanAtk from '../assets/images/Kings and Pigs/Sprites/01-King Human/Attack (78x58).png?url';
+import kingPigRun from '../assets/images/Kings and Pigs/Sprites/02-King Pig/Run (38x28).png?url';
+import kingPigAtk from '../assets/images/Kings and Pigs/Sprites/02-King Pig/Attack (38x28).png?url';
+import pigRun from '../assets/images/Kings and Pigs/Sprites/03-Pig/Run (34x28).png?url';
+import pigAtk from '../assets/images/Kings and Pigs/Sprites/03-Pig/Attack (34x28).png?url';
+// --- Pixel Adventure 2 (strip format) ---
+import chameleonRun from '../assets/images/Pixel Adventure 2/Enemies/Chameleon/Run (84x38).png?url';
+import chameleonAtk from '../assets/images/Pixel Adventure 2/Enemies/Chameleon/Attack (84x38).png?url';
+import skullIdle from '../assets/images/Pixel Adventure 2/Enemies/Skull/Idle 1 (52x54).png?url';
+import radishRun from '../assets/images/Pixel Adventure 2/Enemies/Radish/Run (30x38).png?url';
+// --- Demon Smasher color variants (CHARACTER MEGAPACK) ---
+import demonMeleeDevil from '../assets/images/CHARACTER MEGAPACK/CHARACTER MEGAPACK/RhinoMonster_04_Devil/Move_8x1.png?url';
+import demonMeleeDevilAtk from '../assets/images/CHARACTER MEGAPACK/CHARACTER MEGAPACK/RhinoMonster_04_Devil/Charge_Full_42x1.png?url';
+import demonMeleeSilver from '../assets/images/CHARACTER MEGAPACK/CHARACTER MEGAPACK/RhinoMonster_02_Silver/Move_8x1.png?url';
+import demonMeleeSilverAtk from '../assets/images/CHARACTER MEGAPACK/CHARACTER MEGAPACK/RhinoMonster_02_Silver/Charge_Full_42x1.png?url';
+import demonMeleeGold from '../assets/images/CHARACTER MEGAPACK/CHARACTER MEGAPACK/RhinoMonster_03_Gold/Move_8x1.png?url';
+import demonMeleeGoldAtk from '../assets/images/CHARACTER MEGAPACK/CHARACTER MEGAPACK/RhinoMonster_03_Gold/Charge_Full_42x1.png?url';
+import demonMeleeOrc from '../assets/images/CHARACTER MEGAPACK/CHARACTER MEGAPACK/RhinoMonster_05_Orc/Move_8x1.png?url';
+import demonMeleeOrcAtk from '../assets/images/CHARACTER MEGAPACK/CHARACTER MEGAPACK/RhinoMonster_05_Orc/Charge_Full_42x1.png?url';
+import demonMeleeFrozen from '../assets/images/CHARACTER MEGAPACK/CHARACTER MEGAPACK/RhinoMonster_07_Frozen/Move_8x1.png?url';
+import demonMeleeFrozenAtk from '../assets/images/CHARACTER MEGAPACK/CHARACTER MEGAPACK/RhinoMonster_07_Frozen/Charge_Full_42x1.png?url';
+import demonMeleeBio from '../assets/images/CHARACTER MEGAPACK/CHARACTER MEGAPACK/RhinoMonster_08_Bioluminescent/Move_8x1.png?url';
+import demonMeleeBioAtk from '../assets/images/CHARACTER MEGAPACK/CHARACTER MEGAPACK/RhinoMonster_08_Bioluminescent/Charge_Full_42x1.png?url';
+// --- Troll (Tiny Swords Enemy Pack) ---
+import trollWalk from '../assets/images/Tiny Swords (Enemy Pack)/Tiny Swords (Enemy Pack)/Enemy Pack/Troll/Troll_Walk.png?url';
+import trollAtk from '../assets/images/Tiny Swords (Enemy Pack)/Tiny Swords (Enemy Pack)/Enemy Pack/Troll/Troll_Attack.png?url';
+// --- Pirate Bomb (combined strips) ---
+import whaleRun from '../assets/images/Pirate Bomb/Sprites/6-Enemy-Whale/Whale_Run.png?url';
+import whaleAtk from '../assets/images/Pirate Bomb/Sprites/6-Enemy-Whale/Whale_Attack.png?url';
+// --- Treasure Hunters - Crusty Crew (combined strips) ---
+import crabbyRun from '../assets/images/Treasure Hunters/Treasure Hunters/The Crusty Crew/Sprites/Crabby/Crabby_Run.png?url';
+import crabbyAtk from '../assets/images/Treasure Hunters/Treasure Hunters/The Crusty Crew/Sprites/Crabby/Crabby_Attack.png?url';
+import fierceToothRun from '../assets/images/Treasure Hunters/Treasure Hunters/The Crusty Crew/Sprites/Fierce Tooth/FierceTooth_Run.png?url';
+import fierceToothAtk from '../assets/images/Treasure Hunters/Treasure Hunters/The Crusty Crew/Sprites/Fierce Tooth/FierceTooth_Attack.png?url';
+import pinkStarRun from '../assets/images/Treasure Hunters/Treasure Hunters/The Crusty Crew/Sprites/Pink Star/PinkStar_Run.png?url';
+import pinkStarAtk from '../assets/images/Treasure Hunters/Treasure Hunters/The Crusty Crew/Sprites/Pink Star/PinkStar_Attack.png?url';
+// --- Treasure Hunters - Seashell (clam, combined strips) ---
+import seashellOpening from '../assets/images/Treasure Hunters/Treasure Hunters/Shooter Traps/Sprites/Seashell/Seashell_Opening.png?url';
+import seashellBite from '../assets/images/Treasure Hunters/Treasure Hunters/Shooter Traps/Sprites/Seashell/Seashell_Bite.png?url';
+// --- Pirate Bomb - Bald Pirate (combined strips) ---
+import baldPirateRun from '../assets/images/Pirate Bomb/Sprites/2-Enemy-Bald Pirate/BaldPirate_Run.png?url';
+import baldPirateAtk from '../assets/images/Pirate Bomb/Sprites/2-Enemy-Bald Pirate/BaldPirate_Attack.png?url';
+// --- Pirate Bomb - Captain (combined strips) ---
+import captainRun from '../assets/images/Pirate Bomb/Sprites/5-Enemy-Captain/Captain_Run.png?url';
+import captainAtk from '../assets/images/Pirate Bomb/Sprites/5-Enemy-Captain/Captain_Attack.png?url';
+// --- Treasure Hunters - Captain Clown Nose (combined strips) ---
+import clownNoseRun from '../assets/images/Treasure Hunters/Treasure Hunters/Captain Clown Nose/Sprites/Captain Clown Nose/ClownNose_Run.png?url';
+import clownNoseAtk from '../assets/images/Treasure Hunters/Treasure Hunters/Captain Clown Nose/Sprites/Captain Clown Nose/ClownNose_Attack.png?url';
+// --- Treasure Hunters - Diamond (combined strips) ---
+import blueDiamondIdle from '../assets/images/Treasure Hunters/Treasure Hunters/Pirate Treasure/Sprites/Blue Diamond/BlueDiamond_Idle.png?url';
+
+// ============================================================
 // SPRITE DEFINITIONS
 // ============================================================
 
@@ -362,6 +420,7 @@ export interface SpriteDef {
   scale?: number;    // optional display scale multiplier (default 1.0)
   heightScale?: number; // squash/stretch height independently of width (default 1.0)
   animSpeed?: number;  // animation speed multiplier (default 1.0, higher = faster)
+  anchorX?: number;    // horizontal anchor as fraction of frame width (0=left, 0.5=center, 1=right; default 0.5)
 }
 
 /** Compute animation frame index from a tick counter (~20 ticks/sec). Respects animSpeed. */
@@ -429,9 +488,9 @@ const RACE_UNIT_SPRITES: Record<Race, RaceUnitSprites> = {
     caster: { 0: tsSheet(crownCasterBlue, 768, 192), 1: tsSheet(crownCasterPurple, 768, 192), 2: tsSheet(crownCasterRed, 768, 192), 3: tsSheet(crownCasterYellow, 768, 192), 4: tsSheet(crownCasterBlack, 768, 192), 5: tsSheet(crownCasterBlue, 768, 192) },
   },
   [Race.Horde]: {
-    melee:  cmStrip(hordeMelee, 57 * 5, 58, 5),
-    ranged: { ...cmStrip(hordeRanged, 74 * 6, 41, 6), scale: 0.84, heightScale: 0.84 },
-    caster: { ...cmStrip(hordeCaster, 38 * 10, 26, 10), scale: 0.495 },
+    melee:  { ...cmStrip(hordeMelee, 57 * 5, 58, 5), scale: 0.9 },
+    ranged: { ...cmStrip(hordeRanged, 74 * 6, 41, 6), scale: 0.74, heightScale: 0.74 },
+    caster: { ...cmStrip(hordeCaster, 38 * 10, 26, 10), scale: 0.445 },
   },
   [Race.Goblins]: {
     melee:  tsSheet(goblinsMelee, 1536, 256, 0.67),
@@ -439,13 +498,13 @@ const RACE_UNIT_SPRITES: Record<Race, RaceUnitSprites> = {
     caster: tsSheet(goblinsCaster, 768, 192),
   },
   [Race.Oozlings]: {
-    melee:  { ...cmStrip(oozlingsMelee, 30 * 5, 30, 5, 0.93), scale: 0.6 },
-    ranged: { ...cmStrip(oozlingsRanged, 40 * 6, 40, 6, 0.75), scale: 0.8 },
-    caster: { ...cmStrip(oozlingsCaster, 30 * 6, 40, 6, 0.93), scale: 0.8 },
+    melee:  { ...cmStrip(oozlingsMelee, 30 * 5, 30, 5, 0.93), scale: 0.5 },
+    ranged: { ...cmStrip(oozlingsRanged, 40 * 6, 40, 6, 0.75), scale: 0.7 },
+    caster: { ...cmStrip(oozlingsCaster, 30 * 6, 40, 6, 0.93), scale: 0.7 },
   },
   [Race.Demon]: {
-    melee:  cmStrip(demonMelee, 78 * 8, 54, 8, 0.76),
-    ranged: { ...cmStrip(demonRanged, 624, 30, 16), scale: 0.70 },
+    melee:  { ...cmStrip(demonMelee, 78 * 8, 54, 8, 0.76), scale: 0.9 },
+    ranged: { ...cmStrip(demonRanged, 624, 30, 16), scale: 0.60 },
     caster: { ...cmStrip(demonCaster, 173 * 48, 156, 48, 0.86), scale: 1.3 },
   },
   [Race.Deep]: {
@@ -461,7 +520,7 @@ const RACE_UNIT_SPRITES: Record<Race, RaceUnitSprites> = {
   [Race.Geists]: {
     melee:  tsSheet(geistsMelee, 1152, 192, 0.68),
     ranged: { ...cmStrip(geistsRanged, 740, 29, 20), scale: 0.55 },
-    caster: cmStrip(geistsCaster, 984, 42, 24, 0.69),
+    caster: { ...cmStrip(geistsCaster, 984, 42, 24, 0.69), scale: 0.9 },
   },
   [Race.Tenders]: {
     melee:  cmStrip(tendersMelee, 1666, 52, 34, 0.94),
@@ -478,9 +537,9 @@ const RACE_ATK_SPRITES: Record<Race, Partial<RaceUnitSprites>> = {
     caster: { 0: tsSheet(crownCasterAtkBlue, 2112, 192), 1: tsSheet(crownCasterAtkPurple, 2112, 192), 2: tsSheet(crownCasterAtkRed, 2112, 192), 3: tsSheet(crownCasterAtkYellow, 2112, 192), 4: tsSheet(crownCasterAtkBlack, 2112, 192), 5: tsSheet(crownCasterAtkBlue, 2112, 192) },
   },
   [Race.Horde]: {
-    melee:  cmStrip(hordeMeleeAtk, 684, 58, 12),
-    ranged: { ...cmStrip(hordeRangedAtk, 1332, 41, 18), scale: 0.84, heightScale: 0.84 },
-    caster: { ...cmStrip(hordeCasterAtk, 380, 26, 10), scale: 0.495 },
+    melee:  { ...cmStrip(hordeMeleeAtk, 684, 58, 12), scale: 0.9 },
+    ranged: { ...cmStrip(hordeRangedAtk, 1332, 41, 18), scale: 0.74, heightScale: 0.74 },
+    caster: { ...cmStrip(hordeCasterAtk, 380, 26, 10), scale: 0.445 },
   },
   [Race.Goblins]: {
     melee:  tsSheet(goblinsMeleeAtk, 2048, 256, 0.67),
@@ -489,8 +548,8 @@ const RACE_ATK_SPRITES: Record<Race, Partial<RaceUnitSprites>> = {
   },
   [Race.Oozlings]: {}, // slimes use same animation for move/attack
   [Race.Demon]: {
-    melee:  cmStrip(demonMeleeAtk, 3276, 54, 42, 0.76),
-    ranged: { ...cmStrip(demonRangedAtk, 858, 30, 22), scale: 0.70 },
+    melee:  { ...cmStrip(demonMeleeAtk, 3276, 54, 42, 0.76), scale: 0.9 },
+    ranged: { ...cmStrip(demonRangedAtk, 858, 30, 22), scale: 0.60 },
     caster: { ...cmStrip(demonCasterAtk, 8304, 156, 48, 0.86), scale: 1.3 },
   },
   [Race.Deep]: {
@@ -526,69 +585,69 @@ function upgradeKey(race: Race, cat: UnitCategory, node: string): string {
 
 const UPGRADE_MOVE_SPRITES: Record<string, SpriteDef> = {
   // --- Geists melee: Skull → Mimic branch (C/F/G) ---
-  [upgradeKey(Race.Geists, 'melee', 'C')]: cmStrip(mimicL1Move, 602, 32, 14),
-  [upgradeKey(Race.Geists, 'melee', 'F')]: cmStrip(mimicL2Move, 696, 38, 24),
+  [upgradeKey(Race.Geists, 'melee', 'C')]: { ...cmStrip(mimicL1Move, 602, 32, 14), scale: 0.8 },
+  [upgradeKey(Race.Geists, 'melee', 'F')]: { ...cmStrip(mimicL2Move, 696, 38, 24), scale: 0.8 },
   [upgradeKey(Race.Geists, 'melee', 'G')]: cmStrip(mimicL4Move, 1200, 69, 16),
   // --- Crown ranged: Archer → Dwarfette branch (C/F/G) ---
-  [upgradeKey(Race.Crown, 'ranged', 'C')]: cmStrip(dwarfetteL1Move, 368, 36, 8, 0.72),
-  [upgradeKey(Race.Crown, 'ranged', 'F')]: cmStrip(dwarfetteL2Move, 530, 35, 10, 0.89),
-  [upgradeKey(Race.Crown, 'ranged', 'G')]: cmStrip(dwarfetteL4Move, 1876, 52, 28, 0.94),
+  [upgradeKey(Race.Crown, 'ranged', 'C')]: { ...cmStrip(dwarfetteL1Move, 368, 36, 8, 0.72), scale: 0.7 },
+  [upgradeKey(Race.Crown, 'ranged', 'F')]: { ...cmStrip(dwarfetteL2Move, 530, 35, 10, 0.89), scale: 0.7 },
+  [upgradeKey(Race.Crown, 'ranged', 'G')]: { ...cmStrip(dwarfetteL4Move, 1876, 52, 28, 0.94), scale: 0.8 },
   // --- Horde: Orc color variants (B=Blue, C=Red for melee/ranged/caster) ---
-  [upgradeKey(Race.Horde, 'melee', 'B')]: cmStrip(hordeMeleeBlue, 57 * 5, 58, 5),
-  [upgradeKey(Race.Horde, 'melee', 'C')]: cmStrip(hordeMeleeRed, 57 * 5, 58, 5),
-  [upgradeKey(Race.Horde, 'melee', 'D')]: cmStrip(hordeMeleeBlue, 57 * 5, 58, 5),
-  [upgradeKey(Race.Horde, 'melee', 'E')]: cmStrip(hordeMeleeBlue, 57 * 5, 58, 5),
-  [upgradeKey(Race.Horde, 'melee', 'F')]: cmStrip(hordeMeleeRed, 57 * 5, 58, 5),
-  [upgradeKey(Race.Horde, 'melee', 'G')]: cmStrip(hordeMeleeRed, 57 * 5, 58, 5),
-  [upgradeKey(Race.Horde, 'ranged', 'B')]: { ...cmStrip(hordeRangedBlue, 74 * 6, 41, 6), scale: 0.84, heightScale: 0.84 },
-  [upgradeKey(Race.Horde, 'ranged', 'C')]: { ...cmStrip(hordeRangedRed, 74 * 6, 41, 6), scale: 0.84, heightScale: 0.84 },
-  [upgradeKey(Race.Horde, 'ranged', 'D')]: { ...cmStrip(hordeRangedBlue, 74 * 6, 41, 6), scale: 0.84, heightScale: 0.84 },
-  [upgradeKey(Race.Horde, 'ranged', 'E')]: { ...cmStrip(hordeRangedBlue, 74 * 6, 41, 6), scale: 0.84, heightScale: 0.84 },
-  [upgradeKey(Race.Horde, 'ranged', 'F')]: { ...cmStrip(hordeRangedRed, 74 * 6, 41, 6), scale: 0.84, heightScale: 0.84 },
-  [upgradeKey(Race.Horde, 'ranged', 'G')]: { ...cmStrip(hordeRangedRed, 74 * 6, 41, 6), scale: 0.84, heightScale: 0.84 },
-  [upgradeKey(Race.Horde, 'caster', 'B')]: { ...cmStrip(hordeCasterBlue, 38 * 10, 26, 10), scale: 0.495 },
-  [upgradeKey(Race.Horde, 'caster', 'C')]: { ...cmStrip(hordeCasterRed, 38 * 10, 26, 10), scale: 0.495 },
-  [upgradeKey(Race.Horde, 'caster', 'D')]: { ...cmStrip(hordeCasterBlue, 38 * 10, 26, 10), scale: 0.495 },
-  [upgradeKey(Race.Horde, 'caster', 'E')]: { ...cmStrip(hordeCasterBlue, 38 * 10, 26, 10), scale: 0.495 },
-  [upgradeKey(Race.Horde, 'caster', 'F')]: { ...cmStrip(hordeCasterRed, 38 * 10, 26, 10), scale: 0.495 },
-  [upgradeKey(Race.Horde, 'caster', 'G')]: { ...cmStrip(hordeCasterRed, 38 * 10, 26, 10), scale: 0.495 },
+  [upgradeKey(Race.Horde, 'melee', 'B')]: { ...cmStrip(hordeMeleeBlue, 57 * 5, 58, 5), scale: 0.9 },
+  [upgradeKey(Race.Horde, 'melee', 'C')]: { ...cmStrip(hordeMeleeRed, 57 * 5, 58, 5), scale: 0.9 },
+  [upgradeKey(Race.Horde, 'melee', 'D')]: { ...cmStrip(hordeMeleeBlue, 57 * 5, 58, 5), scale: 0.9 },
+  [upgradeKey(Race.Horde, 'melee', 'E')]: { ...cmStrip(hordeMeleeBlue, 57 * 5, 58, 5), scale: 0.9 },
+  [upgradeKey(Race.Horde, 'melee', 'F')]: { ...cmStrip(hordeMeleeRed, 57 * 5, 58, 5), scale: 0.9 },
+  [upgradeKey(Race.Horde, 'melee', 'G')]: { ...cmStrip(hordeMeleeRed, 57 * 5, 58, 5), scale: 0.9 },
+  [upgradeKey(Race.Horde, 'ranged', 'B')]: { ...cmStrip(hordeRangedBlue, 74 * 6, 41, 6), scale: 0.74, heightScale: 0.74 },
+  [upgradeKey(Race.Horde, 'ranged', 'C')]: { ...cmStrip(hordeRangedRed, 74 * 6, 41, 6), scale: 0.74, heightScale: 0.74 },
+  [upgradeKey(Race.Horde, 'ranged', 'D')]: { ...cmStrip(hordeRangedBlue, 74 * 6, 41, 6), scale: 0.74, heightScale: 0.74 },
+  [upgradeKey(Race.Horde, 'ranged', 'E')]: { ...cmStrip(hordeRangedBlue, 74 * 6, 41, 6), scale: 0.74, heightScale: 0.74 },
+  [upgradeKey(Race.Horde, 'ranged', 'F')]: { ...cmStrip(hordeRangedRed, 74 * 6, 41, 6), scale: 0.74, heightScale: 0.74 },
+  [upgradeKey(Race.Horde, 'ranged', 'G')]: { ...cmStrip(hordeRangedRed, 74 * 6, 41, 6), scale: 0.74, heightScale: 0.74 },
+  [upgradeKey(Race.Horde, 'caster', 'B')]: { ...cmStrip(hordeCasterBlue, 38 * 10, 26, 10), scale: 0.445 },
+  [upgradeKey(Race.Horde, 'caster', 'C')]: { ...cmStrip(hordeCasterRed, 38 * 10, 26, 10), scale: 0.445 },
+  [upgradeKey(Race.Horde, 'caster', 'D')]: { ...cmStrip(hordeCasterBlue, 38 * 10, 26, 10), scale: 0.445 },
+  [upgradeKey(Race.Horde, 'caster', 'E')]: { ...cmStrip(hordeCasterBlue, 38 * 10, 26, 10), scale: 0.445 },
+  [upgradeKey(Race.Horde, 'caster', 'F')]: { ...cmStrip(hordeCasterRed, 38 * 10, 26, 10), scale: 0.445 },
+  [upgradeKey(Race.Horde, 'caster', 'G')]: { ...cmStrip(hordeCasterRed, 38 * 10, 26, 10), scale: 0.445 },
   // --- Oozlings: Slime color variants (B=Cyan, C=Purple for melee/ranged/caster, tier2 inherits) ---
-  [upgradeKey(Race.Oozlings, 'melee', 'B')]: { ...cmStrip(oozMeleeCyan, 30 * 5, 30, 5, 0.93), scale: 0.6 },
-  [upgradeKey(Race.Oozlings, 'melee', 'C')]: { ...cmStrip(oozMeleePurple, 30 * 5, 30, 5, 0.93), scale: 0.6 },
-  [upgradeKey(Race.Oozlings, 'melee', 'D')]: { ...cmStrip(oozMeleeCyan, 30 * 5, 30, 5, 0.93), scale: 0.6 },
-  [upgradeKey(Race.Oozlings, 'melee', 'E')]: { ...cmStrip(oozMeleeCyan, 30 * 5, 30, 5, 0.93), scale: 0.6 },
-  [upgradeKey(Race.Oozlings, 'melee', 'F')]: { ...cmStrip(oozMeleePurple, 30 * 5, 30, 5, 0.93), scale: 0.6 },
-  [upgradeKey(Race.Oozlings, 'melee', 'G')]: { ...cmStrip(oozMeleePurple, 30 * 5, 30, 5, 0.93), scale: 0.6 },
-  [upgradeKey(Race.Oozlings, 'ranged', 'B')]: { ...cmStrip(oozRangedCyan, 40 * 6, 40, 6, 0.75), scale: 0.8 },
-  [upgradeKey(Race.Oozlings, 'ranged', 'C')]: { ...cmStrip(oozRangedPurple, 40 * 6, 40, 6, 0.75), scale: 0.8 },
-  [upgradeKey(Race.Oozlings, 'ranged', 'D')]: { ...cmStrip(oozRangedCyan, 40 * 6, 40, 6, 0.75), scale: 0.8 },
-  [upgradeKey(Race.Oozlings, 'ranged', 'E')]: { ...cmStrip(oozRangedCyan, 40 * 6, 40, 6, 0.75), scale: 0.8 },
-  [upgradeKey(Race.Oozlings, 'ranged', 'F')]: { ...cmStrip(oozRangedPurple, 40 * 6, 40, 6, 0.75), scale: 0.8 },
-  [upgradeKey(Race.Oozlings, 'ranged', 'G')]: { ...cmStrip(oozRangedPurple, 40 * 6, 40, 6, 0.75), scale: 0.8 },
-  [upgradeKey(Race.Oozlings, 'caster', 'B')]: { ...cmStrip(oozCasterCyan, 30 * 6, 40, 6, 0.93), scale: 0.8 },
-  [upgradeKey(Race.Oozlings, 'caster', 'C')]: { ...cmStrip(oozCasterPurple, 30 * 6, 40, 6, 0.93), scale: 0.8 },
-  [upgradeKey(Race.Oozlings, 'caster', 'D')]: { ...cmStrip(oozCasterCyan, 30 * 6, 40, 6, 0.93), scale: 0.8 },
-  [upgradeKey(Race.Oozlings, 'caster', 'E')]: { ...cmStrip(oozCasterCyan, 30 * 6, 40, 6, 0.93), scale: 0.8 },
-  [upgradeKey(Race.Oozlings, 'caster', 'F')]: { ...cmStrip(oozCasterPurple, 30 * 6, 40, 6, 0.93), scale: 0.8 },
-  [upgradeKey(Race.Oozlings, 'caster', 'G')]: { ...cmStrip(oozCasterPurple, 30 * 6, 40, 6, 0.93), scale: 0.8 },
+  [upgradeKey(Race.Oozlings, 'melee', 'B')]: { ...cmStrip(oozMeleeCyan, 30 * 5, 30, 5, 0.93), scale: 0.5 },
+  [upgradeKey(Race.Oozlings, 'melee', 'C')]: { ...cmStrip(oozMeleePurple, 30 * 5, 30, 5, 0.93), scale: 0.5 },
+  [upgradeKey(Race.Oozlings, 'melee', 'D')]: { ...cmStrip(oozMeleeCyan, 30 * 5, 30, 5, 0.93), scale: 0.5 },
+  [upgradeKey(Race.Oozlings, 'melee', 'E')]: { ...cmStrip(oozMeleeCyan, 30 * 5, 30, 5, 0.93), scale: 0.5 },
+  [upgradeKey(Race.Oozlings, 'melee', 'F')]: { ...cmStrip(oozMeleePurple, 30 * 5, 30, 5, 0.93), scale: 0.5 },
+  [upgradeKey(Race.Oozlings, 'melee', 'G')]: { ...cmStrip(oozMeleePurple, 30 * 5, 30, 5, 0.93), scale: 0.5 },
+  [upgradeKey(Race.Oozlings, 'ranged', 'B')]: { ...cmStrip(oozRangedCyan, 40 * 6, 40, 6, 0.75), scale: 0.7 },
+  [upgradeKey(Race.Oozlings, 'ranged', 'C')]: { ...cmStrip(oozRangedPurple, 40 * 6, 40, 6, 0.75), scale: 0.7 },
+  [upgradeKey(Race.Oozlings, 'ranged', 'D')]: { ...cmStrip(oozRangedCyan, 40 * 6, 40, 6, 0.75), scale: 0.7 },
+  [upgradeKey(Race.Oozlings, 'ranged', 'E')]: { ...cmStrip(oozRangedCyan, 40 * 6, 40, 6, 0.75), scale: 0.7 },
+  [upgradeKey(Race.Oozlings, 'ranged', 'F')]: { ...cmStrip(oozRangedPurple, 40 * 6, 40, 6, 0.75), scale: 0.7 },
+  [upgradeKey(Race.Oozlings, 'ranged', 'G')]: { ...cmStrip(oozRangedPurple, 40 * 6, 40, 6, 0.75), scale: 0.7 },
+  [upgradeKey(Race.Oozlings, 'caster', 'B')]: { ...cmStrip(oozCasterCyan, 30 * 6, 40, 6, 0.93), scale: 0.7 },
+  [upgradeKey(Race.Oozlings, 'caster', 'C')]: { ...cmStrip(oozCasterPurple, 30 * 6, 40, 6, 0.93), scale: 0.7 },
+  [upgradeKey(Race.Oozlings, 'caster', 'D')]: { ...cmStrip(oozCasterCyan, 30 * 6, 40, 6, 0.93), scale: 0.7 },
+  [upgradeKey(Race.Oozlings, 'caster', 'E')]: { ...cmStrip(oozCasterCyan, 30 * 6, 40, 6, 0.93), scale: 0.7 },
+  [upgradeKey(Race.Oozlings, 'caster', 'F')]: { ...cmStrip(oozCasterPurple, 30 * 6, 40, 6, 0.93), scale: 0.7 },
+  [upgradeKey(Race.Oozlings, 'caster', 'G')]: { ...cmStrip(oozCasterPurple, 30 * 6, 40, 6, 0.93), scale: 0.7 },
   // --- Wild melee: Spider → Bear (B) / Spider Brood (C) branches ---
   [upgradeKey(Race.Wild, 'melee', 'B')]: tsSheet(bearRun, 1280, 256, 0.69),
-  [upgradeKey(Race.Wild, 'melee', 'C')]: { ...tsSheet(wildMelee, 1536, 192, 0.71), scale: 0.4 }, // Spider Brood (3 small spiders)
+  [upgradeKey(Race.Wild, 'melee', 'C')]: { ...tsSheet(wildMelee, 960, 192, 0.71), scale: 0.6 }, // Spider Brood (3 small spiders)
   [upgradeKey(Race.Wild, 'melee', 'D')]: { ...tsSheet(minotaurWalk, 2560, 320, 0.67), scale: 1.5 },
   [upgradeKey(Race.Wild, 'melee', 'E')]: { ...tsSheet(bearRun, 1280, 256, 0.69), scale: 1.3 },
-  [upgradeKey(Race.Wild, 'melee', 'F')]: { ...tsSheet(snakeRun, 1536, 192, 0.64), scale: 0.4 }, // Viper Nest (3 small snakes)
-  [upgradeKey(Race.Wild, 'melee', 'G')]: { ...tsSheet(wildMelee, 1536, 192, 0.71), scale: 0.3 }, // Spider Swarm (5 tiny spiders)
+  [upgradeKey(Race.Wild, 'melee', 'F')]: { ...tsSheet(snakeRun, 1536, 192, 0.64), scale: 0.6 }, // Viper Nest (3 small snakes)
+  [upgradeKey(Race.Wild, 'melee', 'G')]: { ...tsSheet(wildMelee, 960, 192, 0.71), scale: 0.5 }, // Spider Swarm (5 tiny spiders)
   // --- Deep melee: Turtle → Frog branch (C=FrogMonster, F/G=FrogBoss) ---
-  [upgradeKey(Race.Deep, 'melee', 'C')]: { ...cmStrip(frogMonsterMove, 1056, 48, 22), animSpeed: 1.8 },
-  [upgradeKey(Race.Deep, 'melee', 'F')]: { ...cmStrip(frogBossMove, 2552, 97, 22), animSpeed: 1.8 },
+  [upgradeKey(Race.Deep, 'melee', 'C')]: { ...cmStrip(frogMonsterMove, 1056, 48, 22), animSpeed: 1.8, scale: 0.8 },
+  [upgradeKey(Race.Deep, 'melee', 'F')]: { ...cmStrip(frogBossMove, 2552, 97, 22), animSpeed: 1.8, scale: 0.9 },
   [upgradeKey(Race.Deep, 'melee', 'G')]: { ...cmStrip(frogBossMove, 2552, 97, 22), animSpeed: 1.8 },
   // --- Tenders caster: Panda → Mushroom branch (C/F/G) ---
-  [upgradeKey(Race.Tenders, 'caster', 'C')]: cmStrip(mushroomMove, 800, 31, 20),
-  [upgradeKey(Race.Tenders, 'caster', 'F')]: cmStrip(mushroomMove, 800, 31, 20),
-  [upgradeKey(Race.Tenders, 'caster', 'G')]: cmStrip(mushroomMove, 800, 31, 20),
+  [upgradeKey(Race.Tenders, 'caster', 'C')]: { ...cmStrip(mushroomMove, 800, 31, 20), scale: 0.6 },
+  [upgradeKey(Race.Tenders, 'caster', 'F')]: { ...cmStrip(mushroomMove, 800, 31, 20), scale: 0.7 },
+  [upgradeKey(Race.Tenders, 'caster', 'G')]: { ...cmStrip(mushroomMove, 800, 31, 20), scale: 0.8 },
   // --- Geists caster: Sorcerer LVL1 → LVL2/3/4 branch (C/F/G) ---
-  [upgradeKey(Race.Geists, 'caster', 'C')]: cmStrip(sorcererL2Move, 456, 28, 12, 1.0),
-  [upgradeKey(Race.Geists, 'caster', 'F')]: cmStrip(sorcererL3Move, 624, 44, 12, 1.0),
+  [upgradeKey(Race.Geists, 'caster', 'C')]: { ...cmStrip(sorcererL2Move, 456, 28, 12, 1.0), scale: 0.7 },
+  [upgradeKey(Race.Geists, 'caster', 'F')]: { ...cmStrip(sorcererL3Move, 624, 44, 12, 1.0), scale: 0.8 },
   [upgradeKey(Race.Geists, 'caster', 'G')]: cmStrip(sorcererL4Move, 1488, 59, 24, 1.0),
   // --- Tenders melee: Ent LVL1 → LVL2/3/4 branch (B/D/E) ---
   [upgradeKey(Race.Tenders, 'melee', 'B')]: cmStrip(entL2Move, 828, 45, 12, 0.94),
@@ -598,63 +657,173 @@ const UPGRADE_MOVE_SPRITES: Record<string, SpriteDef> = {
   [upgradeKey(Race.Wild, 'ranged', 'C')]: tsSheet(snakeRun, 1536, 192, 0.64),
   [upgradeKey(Race.Wild, 'ranged', 'F')]: tsSheet(snakeRun, 1536, 192, 0.64),
   [upgradeKey(Race.Wild, 'ranged', 'G')]: tsSheet(snakeRun, 1536, 192, 0.64),
+  // --- Crown melee: Warrior → King Human branch (C/F/G) — faces RIGHT natively ---
+  [upgradeKey(Race.Crown, 'melee', 'C')]: cmStrip(kingHumanRun, 624, 58, 8, 0.74),
+  [upgradeKey(Race.Crown, 'melee', 'F')]: cmStrip(kingHumanRun, 624, 58, 8, 0.74),
+  [upgradeKey(Race.Crown, 'melee', 'G')]: cmStrip(kingHumanRun, 624, 58, 8, 0.74),
+  // --- Deep melee: → Whale branch (B/D/E) — bigger aquatic elite ---
+  [upgradeKey(Race.Deep, 'melee', 'B')]: { ...cmStrip(whaleRun, 952, 46, 14, 0.98), scale: 0.5 },
+  [upgradeKey(Race.Deep, 'melee', 'D')]: { ...cmStrip(whaleRun, 952, 46, 14, 0.98), scale: 0.6 },
+  [upgradeKey(Race.Deep, 'melee', 'E')]: { ...cmStrip(whaleRun, 952, 46, 14, 0.98), scale: 0.7 },
+  // --- Deep ranged: → Crabby branch (C/F/G) ---
+  [upgradeKey(Race.Deep, 'ranged', 'C')]: { ...cmStrip(crabbyRun, 432, 32, 6, 0.81), scale: 0.5 },
+  [upgradeKey(Race.Deep, 'ranged', 'F')]: { ...cmStrip(crabbyRun, 432, 32, 6, 0.81), scale: 0.6 },
+  [upgradeKey(Race.Deep, 'ranged', 'G')]: { ...cmStrip(crabbyRun, 432, 32, 6, 0.81), scale: 0.7 },
+  // --- Geists ranged: → Skull branch (C/F/G) ---
+  [upgradeKey(Race.Geists, 'ranged', 'C')]: { ...cmStrip(skullIdle, 416, 54, 8, 0.96), scale: 0.3 },
+  [upgradeKey(Race.Geists, 'ranged', 'F')]: { ...cmStrip(skullIdle, 416, 54, 8, 0.96), scale: 0.4 },
+  [upgradeKey(Race.Geists, 'ranged', 'G')]: { ...cmStrip(skullIdle, 416, 54, 8, 0.96), scale: 0.5 },
+  // --- Wild ranged: → Chameleon branch (B/D/E) — tongue lash ---
+  [upgradeKey(Race.Wild, 'ranged', 'B')]: { ...cmStrip(chameleonRun, 672, 38, 8, 0.97), scale: 0.3, anchorX: 0.25 },
+  [upgradeKey(Race.Wild, 'ranged', 'D')]: { ...cmStrip(chameleonRun, 672, 38, 8, 0.97), scale: 0.4, anchorX: 0.25 },
+  [upgradeKey(Race.Wild, 'ranged', 'E')]: { ...cmStrip(chameleonRun, 672, 38, 8, 0.97), scale: 0.5, anchorX: 0.25 },
+  // --- Goblins ranged: → Pig Bomber branch (C/F/G) ---
+  [upgradeKey(Race.Goblins, 'ranged', 'C')]: { ...cmStrip(pigRun, 204, 28, 6, 0.89), scale: 0.5 },
+  [upgradeKey(Race.Goblins, 'ranged', 'F')]: { ...cmStrip(kingPigRun, 228, 28, 6, 0.89), scale: 0.6 },
+  [upgradeKey(Race.Goblins, 'ranged', 'G')]: { ...cmStrip(kingPigRun, 228, 28, 6, 0.89), scale: 0.6 },
+  // --- Demon melee: unique color per upgrade (Silver→Devil→Orc→Frozen→Gold→Bioluminescent) ---
+  [upgradeKey(Race.Demon, 'melee', 'B')]: { ...cmStrip(demonMeleeSilver, 78 * 8, 54, 8, 0.76), scale: 0.9 },
+  [upgradeKey(Race.Demon, 'melee', 'C')]: { ...cmStrip(demonMeleeDevil, 78 * 8, 54, 8, 0.76), scale: 0.9 },
+  [upgradeKey(Race.Demon, 'melee', 'D')]: { ...cmStrip(demonMeleeOrc, 78 * 8, 54, 8, 0.76), scale: 0.9 },
+  [upgradeKey(Race.Demon, 'melee', 'E')]: { ...cmStrip(demonMeleeFrozen, 78 * 8, 54, 8, 0.76), scale: 0.9 },
+  [upgradeKey(Race.Demon, 'melee', 'F')]: { ...cmStrip(demonMeleeGold, 78 * 8, 54, 8, 0.76), scale: 0.9 },
+  [upgradeKey(Race.Demon, 'melee', 'G')]: { ...cmStrip(demonMeleeBio, 78 * 8, 54, 8, 0.76), scale: 0.9 },
+  // --- Tenders melee: → Radish branch (C/F/G) ---
+  [upgradeKey(Race.Tenders, 'melee', 'C')]: { ...cmStrip(radishRun, 360, 38, 12, 0.95), scale: 0.7 },
+  [upgradeKey(Race.Tenders, 'melee', 'F')]: { ...cmStrip(radishRun, 360, 38, 12, 0.95), scale: 0.7 },
+  [upgradeKey(Race.Tenders, 'melee', 'G')]: { ...cmStrip(radishRun, 360, 38, 12, 0.95), scale: 0.7 },
+  // --- Goblins melee: → Troll branch (B/D/E) ---
+  [upgradeKey(Race.Goblins, 'melee', 'B')]: { ...tsSheet(trollWalk, 3840, 384, 0.71), scale: 1.2 },
+  [upgradeKey(Race.Goblins, 'melee', 'D')]: { ...tsSheet(trollWalk, 3840, 384, 0.71), scale: 1.5 },
+  [upgradeKey(Race.Goblins, 'melee', 'E')]: { ...tsSheet(trollWalk, 3840, 384, 0.71), scale: 1.8 },
+  // --- Crown melee: → Pirate branch (B/D/E) — Bald Pirate (RIGHT) → Captain (RIGHT) → Clown Nose (RIGHT) ---
+  [upgradeKey(Race.Crown, 'melee', 'B')]: { ...cmStrip(baldPirateRun, 882, 67, 14, 0.97), scale: 0.55 },
+  [upgradeKey(Race.Crown, 'melee', 'D')]: { ...cmStrip(captainRun, 1120, 72, 14, 0.97), scale: 0.5 },
+  [upgradeKey(Race.Crown, 'melee', 'E')]: { ...cmStrip(clownNoseRun, 384, 40, 6, 0.73), scale: 0.6 },
+  // --- Deep ranged: → Fierce Tooth / shark branch (B/D/E) ---
+  [upgradeKey(Race.Deep, 'ranged', 'B')]: { ...cmStrip(fierceToothRun, 204, 30, 6, 0.97), scale: 0.55 },
+  [upgradeKey(Race.Deep, 'ranged', 'D')]: { ...cmStrip(fierceToothRun, 204, 30, 6, 0.97), scale: 0.6 },
+  [upgradeKey(Race.Deep, 'ranged', 'E')]: { ...cmStrip(fierceToothRun, 204, 30, 6, 0.97), scale: 0.7 },
+  // --- Deep caster: → Seashell / clam branch (C/F/G) ---
+  [upgradeKey(Race.Deep, 'caster', 'C')]: { ...cmStrip(seashellOpening, 240, 38, 5, 1.0), scale: 0.5 },
+  [upgradeKey(Race.Deep, 'caster', 'F')]: { ...cmStrip(seashellOpening, 240, 38, 5, 1.0), scale: 0.6 },
+  [upgradeKey(Race.Deep, 'caster', 'G')]: { ...cmStrip(seashellOpening, 240, 38, 5, 1.0), scale: 0.7 },
+  // --- Deep caster: → Pink Star / starfish branch (B/D/E) ---
+  [upgradeKey(Race.Deep, 'caster', 'B')]: { ...cmStrip(pinkStarRun, 204, 30, 6, 0.97), scale: 0.55 },
+  [upgradeKey(Race.Deep, 'caster', 'D')]: { ...cmStrip(pinkStarRun, 204, 30, 6, 0.97), scale: 0.6 },
+  [upgradeKey(Race.Deep, 'caster', 'E')]: { ...cmStrip(pinkStarRun, 204, 30, 6, 0.97), scale: 0.7 },
 };
 
 const UPGRADE_ATK_SPRITES: Record<string, SpriteDef> = {
   // --- Geists melee: Mimic dash attacks ---
-  [upgradeKey(Race.Geists, 'melee', 'C')]: cmStrip(mimicL1Atk, 602, 32, 14),
-  [upgradeKey(Race.Geists, 'melee', 'F')]: cmStrip(mimicL2Atk, 290, 38, 10),
+  [upgradeKey(Race.Geists, 'melee', 'C')]: { ...cmStrip(mimicL1Atk, 602, 32, 14), scale: 0.8 },
+  [upgradeKey(Race.Geists, 'melee', 'F')]: { ...cmStrip(mimicL2Atk, 290, 38, 10), scale: 0.8 },
   [upgradeKey(Race.Geists, 'melee', 'G')]: cmStrip(mimicL4Atk, 1050, 69, 14),
   // --- Crown ranged: Dwarfette dash attacks ---
-  [upgradeKey(Race.Crown, 'ranged', 'C')]: cmStrip(dwarfetteL1Atk, 368, 36, 8, 0.72),
-  [upgradeKey(Race.Crown, 'ranged', 'F')]: cmStrip(dwarfetteL2Atk, 742, 35, 14, 0.89),
-  [upgradeKey(Race.Crown, 'ranged', 'G')]: cmStrip(dwarfetteL4Atk, 1072, 52, 16, 0.94),
+  [upgradeKey(Race.Crown, 'ranged', 'C')]: { ...cmStrip(dwarfetteL1Atk, 368, 36, 8, 0.72), scale: 0.7 },
+  [upgradeKey(Race.Crown, 'ranged', 'F')]: { ...cmStrip(dwarfetteL2Atk, 742, 35, 14, 0.89), scale: 0.7 },
+  [upgradeKey(Race.Crown, 'ranged', 'G')]: { ...cmStrip(dwarfetteL4Atk, 1072, 52, 16, 0.94), scale: 0.8 },
   // --- Horde: Orc color variant attacks ---
-  [upgradeKey(Race.Horde, 'melee', 'B')]: cmStrip(hordeMeleeAtkBlue, 684, 58, 12),
-  [upgradeKey(Race.Horde, 'melee', 'C')]: cmStrip(hordeMeleeAtkRed, 684, 58, 12),
-  [upgradeKey(Race.Horde, 'melee', 'D')]: cmStrip(hordeMeleeAtkBlue, 684, 58, 12),
-  [upgradeKey(Race.Horde, 'melee', 'E')]: cmStrip(hordeMeleeAtkBlue, 684, 58, 12),
-  [upgradeKey(Race.Horde, 'melee', 'F')]: cmStrip(hordeMeleeAtkRed, 684, 58, 12),
-  [upgradeKey(Race.Horde, 'melee', 'G')]: cmStrip(hordeMeleeAtkRed, 684, 58, 12),
-  [upgradeKey(Race.Horde, 'ranged', 'B')]: { ...cmStrip(hordeRangedAtkBlue, 1332, 41, 18), scale: 0.84, heightScale: 0.84 },
-  [upgradeKey(Race.Horde, 'ranged', 'C')]: { ...cmStrip(hordeRangedAtkRed, 1332, 41, 18), scale: 0.84, heightScale: 0.84 },
-  [upgradeKey(Race.Horde, 'ranged', 'D')]: { ...cmStrip(hordeRangedAtkBlue, 1332, 41, 18), scale: 0.84, heightScale: 0.84 },
-  [upgradeKey(Race.Horde, 'ranged', 'E')]: { ...cmStrip(hordeRangedAtkBlue, 1332, 41, 18), scale: 0.84, heightScale: 0.84 },
-  [upgradeKey(Race.Horde, 'ranged', 'F')]: { ...cmStrip(hordeRangedAtkRed, 1332, 41, 18), scale: 0.84, heightScale: 0.84 },
-  [upgradeKey(Race.Horde, 'ranged', 'G')]: { ...cmStrip(hordeRangedAtkRed, 1332, 41, 18), scale: 0.84, heightScale: 0.84 },
-  [upgradeKey(Race.Horde, 'caster', 'B')]: { ...cmStrip(hordeCasterAtkBlue, 380, 26, 10), scale: 0.495 },
-  [upgradeKey(Race.Horde, 'caster', 'C')]: { ...cmStrip(hordeCasterAtkRed, 380, 26, 10), scale: 0.495 },
-  [upgradeKey(Race.Horde, 'caster', 'D')]: { ...cmStrip(hordeCasterAtkBlue, 380, 26, 10), scale: 0.495 },
-  [upgradeKey(Race.Horde, 'caster', 'E')]: { ...cmStrip(hordeCasterAtkBlue, 380, 26, 10), scale: 0.495 },
-  [upgradeKey(Race.Horde, 'caster', 'F')]: { ...cmStrip(hordeCasterAtkRed, 380, 26, 10), scale: 0.495 },
-  [upgradeKey(Race.Horde, 'caster', 'G')]: { ...cmStrip(hordeCasterAtkRed, 380, 26, 10), scale: 0.495 },
+  [upgradeKey(Race.Horde, 'melee', 'B')]: { ...cmStrip(hordeMeleeAtkBlue, 684, 58, 12), scale: 0.9 },
+  [upgradeKey(Race.Horde, 'melee', 'C')]: { ...cmStrip(hordeMeleeAtkRed, 684, 58, 12), scale: 0.9 },
+  [upgradeKey(Race.Horde, 'melee', 'D')]: { ...cmStrip(hordeMeleeAtkBlue, 684, 58, 12), scale: 0.9 },
+  [upgradeKey(Race.Horde, 'melee', 'E')]: { ...cmStrip(hordeMeleeAtkBlue, 684, 58, 12), scale: 0.9 },
+  [upgradeKey(Race.Horde, 'melee', 'F')]: { ...cmStrip(hordeMeleeAtkRed, 684, 58, 12), scale: 0.9 },
+  [upgradeKey(Race.Horde, 'melee', 'G')]: { ...cmStrip(hordeMeleeAtkRed, 684, 58, 12), scale: 0.9 },
+  [upgradeKey(Race.Horde, 'ranged', 'B')]: { ...cmStrip(hordeRangedAtkBlue, 1332, 41, 18), scale: 0.74, heightScale: 0.74 },
+  [upgradeKey(Race.Horde, 'ranged', 'C')]: { ...cmStrip(hordeRangedAtkRed, 1332, 41, 18), scale: 0.74, heightScale: 0.74 },
+  [upgradeKey(Race.Horde, 'ranged', 'D')]: { ...cmStrip(hordeRangedAtkBlue, 1332, 41, 18), scale: 0.74, heightScale: 0.74 },
+  [upgradeKey(Race.Horde, 'ranged', 'E')]: { ...cmStrip(hordeRangedAtkBlue, 1332, 41, 18), scale: 0.74, heightScale: 0.74 },
+  [upgradeKey(Race.Horde, 'ranged', 'F')]: { ...cmStrip(hordeRangedAtkRed, 1332, 41, 18), scale: 0.74, heightScale: 0.74 },
+  [upgradeKey(Race.Horde, 'ranged', 'G')]: { ...cmStrip(hordeRangedAtkRed, 1332, 41, 18), scale: 0.74, heightScale: 0.74 },
+  [upgradeKey(Race.Horde, 'caster', 'B')]: { ...cmStrip(hordeCasterAtkBlue, 380, 26, 10), scale: 0.445 },
+  [upgradeKey(Race.Horde, 'caster', 'C')]: { ...cmStrip(hordeCasterAtkRed, 380, 26, 10), scale: 0.445 },
+  [upgradeKey(Race.Horde, 'caster', 'D')]: { ...cmStrip(hordeCasterAtkBlue, 380, 26, 10), scale: 0.445 },
+  [upgradeKey(Race.Horde, 'caster', 'E')]: { ...cmStrip(hordeCasterAtkBlue, 380, 26, 10), scale: 0.445 },
+  [upgradeKey(Race.Horde, 'caster', 'F')]: { ...cmStrip(hordeCasterAtkRed, 380, 26, 10), scale: 0.445 },
+  [upgradeKey(Race.Horde, 'caster', 'G')]: { ...cmStrip(hordeCasterAtkRed, 380, 26, 10), scale: 0.445 },
   // --- Wild melee: Bear (B/E) / Minotaur (D) / Snake (F) attacks ---
   [upgradeKey(Race.Wild, 'melee', 'B')]: tsSheet(bearAttack, 2304, 256, 0.69),
-  [upgradeKey(Race.Wild, 'melee', 'C')]: { ...tsSheet(wildMeleeAtk, 1152, 192, 0.71), scale: 0.4 }, // Spider Brood attack
+  [upgradeKey(Race.Wild, 'melee', 'C')]: { ...tsSheet(wildMeleeAtk, 1536, 192, 0.71), scale: 0.6 }, // Spider Brood attack
   [upgradeKey(Race.Wild, 'melee', 'D')]: { ...tsSheet(minotaurAttack, 3840, 320, 0.67), scale: 1.5 },
   [upgradeKey(Race.Wild, 'melee', 'E')]: { ...tsSheet(bearAttack, 2304, 256, 0.69), scale: 1.3 },
-  [upgradeKey(Race.Wild, 'melee', 'F')]: { ...tsSheet(snakeAttack, 1152, 192, 0.64), scale: 0.4 }, // Viper Nest attack
-  [upgradeKey(Race.Wild, 'melee', 'G')]: { ...tsSheet(wildMeleeAtk, 1152, 192, 0.71), scale: 0.3 }, // Spider Swarm attack
+  [upgradeKey(Race.Wild, 'melee', 'F')]: { ...tsSheet(snakeAttack, 1152, 192, 0.64), scale: 0.6 }, // Viper Nest attack
+  [upgradeKey(Race.Wild, 'melee', 'G')]: { ...tsSheet(wildMeleeAtk, 1536, 192, 0.71), scale: 0.5 }, // Spider Swarm attack
   // --- Wild ranged: Snake attack sprites (C/F/G) ---
   [upgradeKey(Race.Wild, 'ranged', 'C')]: tsSheet(snakeAttack, 1152, 192, 0.64),
   [upgradeKey(Race.Wild, 'ranged', 'F')]: tsSheet(snakeAttack, 1152, 192, 0.64),
   [upgradeKey(Race.Wild, 'ranged', 'G')]: tsSheet(snakeAttack, 1152, 192, 0.64),
   // --- Deep melee: Frog jump attacks ---
-  [upgradeKey(Race.Deep, 'melee', 'C')]: { ...cmStrip(frogMonsterAtk, 672, 48, 14), animSpeed: 1.8 },
-  [upgradeKey(Race.Deep, 'melee', 'F')]: { ...cmStrip(frogBossAtk, 2552, 138, 22, 0.90), animSpeed: 1.8 },
+  [upgradeKey(Race.Deep, 'melee', 'C')]: { ...cmStrip(frogMonsterAtk, 672, 48, 14), animSpeed: 1.8, scale: 0.8 },
+  [upgradeKey(Race.Deep, 'melee', 'F')]: { ...cmStrip(frogBossAtk, 2552, 138, 22, 0.90), animSpeed: 1.8, scale: 0.9 },
   [upgradeKey(Race.Deep, 'melee', 'G')]: { ...cmStrip(frogBossAtk, 2552, 138, 22, 0.90), animSpeed: 1.8 },
   // --- Tenders caster: Mushroom spell loop ---
-  [upgradeKey(Race.Tenders, 'caster', 'C')]: cmStrip(mushroomAtk, 714, 40, 14),
-  [upgradeKey(Race.Tenders, 'caster', 'F')]: cmStrip(mushroomAtk, 714, 40, 14),
-  [upgradeKey(Race.Tenders, 'caster', 'G')]: cmStrip(mushroomAtk, 714, 40, 14),
+  [upgradeKey(Race.Tenders, 'caster', 'C')]: { ...cmStrip(mushroomAtk, 714, 40, 14), scale: 0.6 },
+  [upgradeKey(Race.Tenders, 'caster', 'F')]: { ...cmStrip(mushroomAtk, 714, 40, 14), scale: 0.7 },
+  [upgradeKey(Race.Tenders, 'caster', 'G')]: { ...cmStrip(mushroomAtk, 714, 40, 14), scale: 0.8 },
   // --- Geists caster: Sorcerer dash attacks ---
-  [upgradeKey(Race.Geists, 'caster', 'C')]: cmStrip(sorcererL2Atk, 380, 28, 10, 1.0),
-  [upgradeKey(Race.Geists, 'caster', 'F')]: cmStrip(sorcererL3Atk, 832, 44, 16, 1.0),
+  [upgradeKey(Race.Geists, 'caster', 'C')]: { ...cmStrip(sorcererL2Atk, 380, 28, 10, 1.0), scale: 0.7 },
+  [upgradeKey(Race.Geists, 'caster', 'F')]: { ...cmStrip(sorcererL3Atk, 832, 44, 16, 1.0), scale: 0.8 },
   [upgradeKey(Race.Geists, 'caster', 'G')]: cmStrip(sorcererL4Atk, 620, 59, 10, 0.98),
   // --- Tenders melee: Ent dash attacks ---
   [upgradeKey(Race.Tenders, 'melee', 'B')]: cmStrip(entL2Atk, 690, 45, 10, 0.94),
   [upgradeKey(Race.Tenders, 'melee', 'D')]: cmStrip(entL3Atk, 688, 56, 8, 0.94),
   [upgradeKey(Race.Tenders, 'melee', 'E')]: cmStrip(entL4Atk, 1888, 70, 32, 0.94),
+  // --- Crown melee: King Human sword attacks — faces RIGHT natively ---
+  [upgradeKey(Race.Crown, 'melee', 'C')]: cmStrip(kingHumanAtk, 234, 58, 3, 0.74),
+  [upgradeKey(Race.Crown, 'melee', 'F')]: cmStrip(kingHumanAtk, 234, 58, 3, 0.74),
+  [upgradeKey(Race.Crown, 'melee', 'G')]: cmStrip(kingHumanAtk, 234, 58, 3, 0.74),
+  // --- Deep melee: Whale bite (B/D/E) ---
+  [upgradeKey(Race.Deep, 'melee', 'B')]: { ...cmStrip(whaleAtk, 748, 46, 11, 0.98), scale: 0.5 },
+  [upgradeKey(Race.Deep, 'melee', 'D')]: { ...cmStrip(whaleAtk, 748, 46, 11, 0.98), scale: 0.6 },
+  [upgradeKey(Race.Deep, 'melee', 'E')]: { ...cmStrip(whaleAtk, 748, 46, 11, 0.98), scale: 0.7 },
+  // --- Deep ranged: Crabby claw attacks ---
+  [upgradeKey(Race.Deep, 'ranged', 'C')]: { ...cmStrip(crabbyAtk, 288, 32, 4, 0.81), scale: 0.5 },
+  [upgradeKey(Race.Deep, 'ranged', 'F')]: { ...cmStrip(crabbyAtk, 288, 32, 4, 0.81), scale: 0.6 },
+  [upgradeKey(Race.Deep, 'ranged', 'G')]: { ...cmStrip(crabbyAtk, 288, 32, 4, 0.81), scale: 0.7 },
+  // --- Geists ranged: Skull (uses same idle as attack, floating) ---
+  [upgradeKey(Race.Geists, 'ranged', 'C')]: { ...cmStrip(skullIdle, 416, 54, 8, 0.96), scale: 0.3 },
+  [upgradeKey(Race.Geists, 'ranged', 'F')]: { ...cmStrip(skullIdle, 416, 54, 8, 0.96), scale: 0.4 },
+  [upgradeKey(Race.Geists, 'ranged', 'G')]: { ...cmStrip(skullIdle, 416, 54, 8, 0.96), scale: 0.5 },
+  // --- Wild ranged: Chameleon tongue lash (B/D/E) ---
+  [upgradeKey(Race.Wild, 'ranged', 'B')]: { ...cmStrip(chameleonAtk, 840, 38, 10, 0.97), scale: 0.3, anchorX: 0.25 },
+  [upgradeKey(Race.Wild, 'ranged', 'D')]: { ...cmStrip(chameleonAtk, 840, 38, 10, 0.97), scale: 0.4, anchorX: 0.25 },
+  [upgradeKey(Race.Wild, 'ranged', 'E')]: { ...cmStrip(chameleonAtk, 840, 38, 10, 0.97), scale: 0.5, anchorX: 0.25 },
+  // --- Goblins ranged: Pig attacks ---
+  [upgradeKey(Race.Goblins, 'ranged', 'C')]: { ...cmStrip(pigAtk, 170, 28, 5, 0.89), scale: 0.5 },
+  [upgradeKey(Race.Goblins, 'ranged', 'F')]: { ...cmStrip(kingPigAtk, 190, 28, 5, 0.89), scale: 0.6 },
+  [upgradeKey(Race.Goblins, 'ranged', 'G')]: { ...cmStrip(kingPigAtk, 190, 28, 5, 0.89), scale: 0.6 },
+  // --- Demon melee: unique color per upgrade charge attacks ---
+  [upgradeKey(Race.Demon, 'melee', 'B')]: { ...cmStrip(demonMeleeSilverAtk, 3276, 54, 42, 0.76), scale: 0.9 },
+  [upgradeKey(Race.Demon, 'melee', 'C')]: { ...cmStrip(demonMeleeDevilAtk, 3276, 54, 42, 0.76), scale: 0.9 },
+  [upgradeKey(Race.Demon, 'melee', 'D')]: { ...cmStrip(demonMeleeOrcAtk, 3276, 54, 42, 0.76), scale: 0.9 },
+  [upgradeKey(Race.Demon, 'melee', 'E')]: { ...cmStrip(demonMeleeFrozenAtk, 3276, 54, 42, 0.76), scale: 0.9 },
+  [upgradeKey(Race.Demon, 'melee', 'F')]: { ...cmStrip(demonMeleeGoldAtk, 3276, 54, 42, 0.76), scale: 0.9 },
+  [upgradeKey(Race.Demon, 'melee', 'G')]: { ...cmStrip(demonMeleeBioAtk, 3276, 54, 42, 0.76), scale: 0.9 },
+  // --- Tenders melee: Radish (C/F/G, same anim for attack) ---
+  [upgradeKey(Race.Tenders, 'melee', 'C')]: { ...cmStrip(radishRun, 360, 38, 12, 0.95), scale: 0.7 },
+  [upgradeKey(Race.Tenders, 'melee', 'F')]: { ...cmStrip(radishRun, 360, 38, 12, 0.95), scale: 0.7 },
+  [upgradeKey(Race.Tenders, 'melee', 'G')]: { ...cmStrip(radishRun, 360, 38, 12, 0.95), scale: 0.7 },
+  // --- Goblins melee: Troll attacks (B/D/E) ---
+  [upgradeKey(Race.Goblins, 'melee', 'B')]: { ...tsSheet(trollAtk, 2304, 384, 0.71), scale: 1.2 },
+  [upgradeKey(Race.Goblins, 'melee', 'D')]: { ...tsSheet(trollAtk, 2304, 384, 0.71), scale: 1.5 },
+  [upgradeKey(Race.Goblins, 'melee', 'E')]: { ...tsSheet(trollAtk, 2304, 384, 0.71), scale: 1.8 },
+  // --- Crown melee: Pirate attacks (B/D/E) — all face RIGHT ---
+  [upgradeKey(Race.Crown, 'melee', 'B')]: { ...cmStrip(baldPirateAtk, 756, 67, 12, 0.97), scale: 0.55 },
+  [upgradeKey(Race.Crown, 'melee', 'D')]: { ...cmStrip(captainAtk, 560, 72, 7, 0.97), scale: 0.5 },
+  [upgradeKey(Race.Crown, 'melee', 'E')]: { ...cmStrip(clownNoseAtk, 192, 40, 3, 0.73), scale: 0.6 },
+  // --- Deep ranged: Fierce Tooth / shark attacks (B/D/E) ---
+  [upgradeKey(Race.Deep, 'ranged', 'B')]: { ...cmStrip(fierceToothAtk, 170, 30, 5, 0.97), scale: 0.55 },
+  [upgradeKey(Race.Deep, 'ranged', 'D')]: { ...cmStrip(fierceToothAtk, 170, 30, 5, 0.97), scale: 0.6 },
+  [upgradeKey(Race.Deep, 'ranged', 'E')]: { ...cmStrip(fierceToothAtk, 170, 30, 5, 0.97), scale: 0.7 },
+  // --- Deep caster: Seashell / clam bite attacks (C/F/G) ---
+  [upgradeKey(Race.Deep, 'caster', 'C')]: { ...cmStrip(seashellBite, 288, 38, 6, 1.0), scale: 0.5 },
+  [upgradeKey(Race.Deep, 'caster', 'F')]: { ...cmStrip(seashellBite, 288, 38, 6, 1.0), scale: 0.6 },
+  [upgradeKey(Race.Deep, 'caster', 'G')]: { ...cmStrip(seashellBite, 288, 38, 6, 1.0), scale: 0.7 },
+  // --- Deep caster: Pink Star / starfish spin attacks (B/D/E) ---
+  [upgradeKey(Race.Deep, 'caster', 'B')]: { ...cmStrip(pinkStarAtk, 136, 30, 4, 0.97), scale: 0.55 },
+  [upgradeKey(Race.Deep, 'caster', 'D')]: { ...cmStrip(pinkStarAtk, 136, 30, 4, 0.97), scale: 0.6 },
+  [upgradeKey(Race.Deep, 'caster', 'E')]: { ...cmStrip(pinkStarAtk, 136, 30, 4, 0.97), scale: 0.7 },
 };
 
 // Harvester (Pawn) — player colored, state-based animations
@@ -738,6 +907,7 @@ export const RESOURCE_SPRITES = {
   sheepGrass: tsSheet(sheepGrass, 1536, 128),
   meatResource: singleFrame(meatResource, 64, 64),
   rock: singleFrame(rock1, 64, 64),
+  diamond: cmStrip(blueDiamondIdle, 96, 24, 4, 0.9),
   // UI resource icons (cleaner for HUD / race select)
   uiGold: singleFrame(uiIconGold, 64, 64),
   uiWood: singleFrame(uiIconWood, 64, 64),
@@ -786,6 +956,9 @@ const ARROW_SPRITES: { [team: number]: SpriteDef } = {
   0: singleFrame(arrowBlue, 64, 64),   // Team.Bottom (Blue/Purple)
   1: singleFrame(arrowRed, 64, 64),    // Team.Top (Red/Yellow)
 };
+
+// Bone projectile: 4x1 spritesheet (256x64, use first frame 64x64)
+const BONE_SPRITE: SpriteDef = singleFrame(gnollBone, 64, 64, 0.5);
 
 // Orbs — small 32px: 6x5 grid (288x240, 48x48/frame, 30 frames)
 const ORB_SM = {
@@ -980,11 +1153,17 @@ export class SpriteLoader {
 
   // --- Projectiles ---
 
-  /** Get arrow sprite for Crown ranged (team 0=bottom, 1=top) */
+  /** Get arrow sprite for ranged units (team 0=bottom, 1=top) */
   getArrowSprite(team: number): [HTMLImageElement, SpriteDef] | null {
     const def = ARROW_SPRITES[team] ?? ARROW_SPRITES[0];
     const img = this.loadImage(def.url);
     return img ? [img, def] : null;
+  }
+
+  /** Get bone projectile sprite (Wild Bonechucker) */
+  getBoneSprite(): [HTMLImageElement, SpriteDef] | null {
+    const img = this.loadImage(BONE_SPRITE.url);
+    return img ? [img, BONE_SPRITE] : null;
   }
 
   /** Get orb sprite for a race's ranged projectiles (size based on race) */
@@ -1062,6 +1241,7 @@ export class SpriteLoader {
 
     // Projectile sprites
     for (const def of Object.values(ARROW_SPRITES)) urls.add(def.url);
+    urls.add(BONE_SPRITE.url);
     for (const def of Object.values(ORB_SM)) urls.add(def.url);
     for (const def of Object.values(ORB_LG)) urls.add(def.url);
     for (const def of Object.values(CIRCLE_SM)) urls.add(def.url);

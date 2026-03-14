@@ -10,6 +10,7 @@ import {
   GameCommand, BuildingType, BuildingState, ResourceType,
   HarvesterAssignment, HarvesterState, UnitState, WarHero,
   StatusType, SoundEvent, CombatEvent, createSeededRng,
+  type ProjectileVisual,
 } from './types';
 import { DUEL_MAP } from './maps';
 import {
@@ -27,17 +28,26 @@ const WOOD_DROP_BATCHES = 1;
 const WOOD_PICKUP_RADIUS = 2.35;
 const WOOD_PILE_SPREAD_RADIUS = 2.0;
 
+// Diamond champion: spawned when diamond is delivered to HQ
+const DIAMOND_RESPAWN_TICKS = 60 * TICK_RATE; // 60 seconds before diamond reappears
+const CHAMPION_BASE_HP = 500;
+const CHAMPION_BASE_DAMAGE = 25;
+const CHAMPION_MOVE_SPEED = 4.0;
+const CHAMPION_ATTACK_SPEED = 0.8;
+const CHAMPION_RANGE = 1.5;
+const CHAMPION_SCALE_PER_DELIVERY = 0.15; // each subsequent delivery makes champion 15% stronger
+
 // Passive income per second per race: +1 of primary resource, +0.1 of secondary
 const PASSIVE_INCOME: Record<Race, { gold: number; wood: number; stone: number }> = {
-  [Race.Crown]:    { gold: 1,   wood: 0.1, stone: 0 },    // gold primary, tiny wood
-  [Race.Horde]:    { gold: 1,   wood: 0,   stone: 0.1 },  // gold primary, tiny stone
-  [Race.Goblins]:  { gold: 1,   wood: 0.1, stone: 0 },    // gold primary, tiny wood
-  [Race.Oozlings]: { gold: 1,   wood: 0,   stone: 0.1 },  // gold primary, tiny stone
-  [Race.Demon]:    { gold: 0,   wood: 0.1, stone: 1 },    // stone primary, tiny wood
-  [Race.Deep]:     { gold: 0.1, wood: 1,   stone: 0 },    // wood primary, tiny gold
-  [Race.Wild]:     { gold: 0,   wood: 1,   stone: 0.1 },  // wood primary, tiny stone
-  [Race.Geists]:   { gold: 0.1, wood: 0,   stone: 1 },    // stone primary, tiny gold
-  [Race.Tenders]:  { gold: 0.1, wood: 1,   stone: 0 },    // wood primary, tiny gold
+  [Race.Crown]:    { gold: 2,   wood: 0.5, stone: 0 },    // gold primary, wood secondary
+  [Race.Horde]:    { gold: 2,   wood: 0,   stone: 0.5 },  // gold primary, stone secondary
+  [Race.Goblins]:  { gold: 2,   wood: 0.5, stone: 0 },    // gold primary, wood secondary
+  [Race.Oozlings]: { gold: 2,   wood: 0,   stone: 0.5 },  // gold primary, stone secondary
+  [Race.Demon]:    { gold: 0,   wood: 0.5, stone: 1 },    // stone primary, wood secondary
+  [Race.Deep]:     { gold: 1,   wood: 1,   stone: 0 },    // wood primary, gold secondary
+  [Race.Wild]:     { gold: 0,   wood: 1,   stone: 0.5 },  // wood primary, stone secondary
+  [Race.Geists]:   { gold: 1,   wood: 0,   stone: 1 },    // stone primary, gold secondary
+  [Race.Tenders]:  { gold: 1,   wood: 1,   stone: 0 },    // wood primary, gold secondary
 };
 
 const INITIAL_RESOURCES: Record<Race, { gold: number; wood: number; stone: number }> = {
@@ -50,6 +60,19 @@ const INITIAL_RESOURCES: Record<Race, { gold: number; wood: number; stone: numbe
   [Race.Wild]:     { gold: 0,   wood: 150, stone: 50 },
   [Race.Geists]:   { gold: 50,  wood: 0,   stone: 150 },
   [Race.Tenders]:  { gold: 50,  wood: 150, stone: 0 },
+};
+
+/** Projectile visual per race for ranged units. */
+const RANGED_VISUAL: Record<Race, ProjectileVisual> = {
+  [Race.Crown]:    'arrow',  // Bowman
+  [Race.Horde]:    'arrow',  // Bowcleaver
+  [Race.Goblins]:  'arrow',  // Knifer (thrown blade)
+  [Race.Oozlings]: 'orb',    // Spitter (acid spit)
+  [Race.Demon]:    'orb',    // Eye Sniper (eye beam)
+  [Race.Deep]:     'arrow',  // Harpooner (harpoon)
+  [Race.Wild]:     'bone',   // Bonechucker
+  [Race.Geists]:   'arrow',  // Wraith Bow
+  [Race.Tenders]:  'arrow',  // Tinker
 };
 
 /** Return the default harvester assignment for a race based on its actual resource usage. */
@@ -283,6 +306,8 @@ export function createInitialState(
     carrierId: null,
     carrierType: null,
     mineProgress: 0,
+    respawnTimer: 0,
+    deliveries: 0,
   };
 
   const state: GameState = {
@@ -323,7 +348,7 @@ export function createInitialState(
   for (let i = 0; i < playerStates.length; i++) {
     const p = playerStates[i];
     if (p.isEmpty) continue;
-    const origin = getHutGridOrigin(i, map);
+    const origin = getHutGridOrigin(i, map, playerStates);
     const totalSlots = map.hutGridCols * map.hutGridRows;
     const centerSlot = Math.floor(totalSlots / 2);
     const slotGx = centerSlot % map.hutGridCols;
@@ -357,10 +382,24 @@ export function createInitialState(
 // All layout functions accept an optional MapDef. When omitted, they use DUEL_MAP
 // (backward-compatible with all existing callers).
 
-export function getBuildGridOrigin(playerId: number, mapDef?: MapDef): { x: number; y: number } {
+export function getBuildGridOrigin(playerId: number, mapDef?: MapDef, players?: { isEmpty: boolean }[]): { x: number; y: number } {
   if (mapDef) {
     const slot = mapDef.playerSlots[playerId];
-    if (slot) return { ...slot.buildGridOrigin };
+    if (slot) {
+      const origin = { ...slot.buildGridOrigin };
+      // Center build grid when teammate is empty (1v1 on a 2v2+ portrait map)
+      if (players && mapDef.playersPerTeam >= 2 && mapDef.shapeAxis === 'y') {
+        const ppt = mapDef.playersPerTeam;
+        const teamStart = Math.floor(playerId / ppt) * ppt;
+        const allTeammatesEmpty = Array.from({ length: ppt }, (_, s) => teamStart + s)
+          .filter(s => s !== playerId)
+          .every(s => players[s]?.isEmpty);
+        if (allTeammatesEmpty) {
+          origin.x = CROSS_BASE_MARGIN + Math.floor((CROSS_BASE_WIDTH - mapDef.buildGridCols) / 2);
+        }
+      }
+      return origin;
+    }
   }
   // Legacy duel map fallback
   const team = playerId < 2 ? Team.Bottom : Team.Top;
@@ -381,10 +420,24 @@ export function getBuildGridOrigin(playerId: number, mapDef?: MapDef): { x: numb
   return { x, y };
 }
 
-export function getHutGridOrigin(playerId: number, mapDef?: MapDef): { x: number; y: number } {
+export function getHutGridOrigin(playerId: number, mapDef?: MapDef, players?: { isEmpty: boolean }[]): { x: number; y: number } {
   if (mapDef) {
     const slot = mapDef.playerSlots[playerId];
-    if (slot) return { ...slot.hutGridOrigin };
+    if (slot) {
+      const origin = { ...slot.hutGridOrigin };
+      // Center hut grid when teammate is empty (1v1 on a 2v2+ portrait map)
+      if (players && mapDef.playersPerTeam >= 2 && mapDef.shapeAxis === 'y') {
+        const ppt = mapDef.playersPerTeam;
+        const teamStart = Math.floor(playerId / ppt) * ppt;
+        const allTeammatesEmpty = Array.from({ length: ppt }, (_, s) => teamStart + s)
+          .filter(s => s !== playerId)
+          .every(s => players[s]?.isEmpty);
+        if (allTeammatesEmpty) {
+          origin.x = CROSS_BASE_MARGIN + Math.floor((CROSS_BASE_WIDTH - mapDef.hutGridCols) / 2);
+        }
+      }
+      return origin;
+    }
   }
   // Legacy duel map fallback
   const team = playerId < 2 ? Team.Bottom : Team.Top;
@@ -414,8 +467,8 @@ export function getHQPosition(team: Team, mapDef?: MapDef): { x: number; y: numb
     : { x: centerX, y: ZONES.TOP_BASE.end - HQ_HEIGHT - 1 };
 }
 
-export function gridSlotToWorld(playerId: number, gridX: number, gridY: number, mapDef?: MapDef): { x: number; y: number } {
-  const origin = getBuildGridOrigin(playerId, mapDef);
+export function gridSlotToWorld(playerId: number, gridX: number, gridY: number, mapDef?: MapDef, players?: { isEmpty: boolean }[]): { x: number; y: number } {
+  const origin = getBuildGridOrigin(playerId, mapDef, players);
   return { x: origin.x + gridX, y: origin.y + gridY };
 }
 
@@ -677,14 +730,20 @@ function placeBuilding(state: GameState, cmd: Extract<GameCommand, { type: 'plac
   }
 
   const isAlley = cmd.gridType === 'alley';
-  // Determine default lane: first player in team → left lane, second → right, third → left, etc.
-  const myTeamIdx = state.mapDef?.playerSlots[cmd.playerId]?.teamIndex ?? (cmd.playerId < 2 ? 0 : 1);
-  let posInTeam = 0;
-  for (let i = 0; i < cmd.playerId; i++) {
-    const otherTeam = state.mapDef?.playerSlots[i]?.teamIndex ?? (i < 2 ? 0 : 1);
-    if (otherTeam === myTeamIdx) posInTeam++;
+  // Determine default lane from map slot override, or fallback to alternating by position in team
+  const slot = state.mapDef?.playerSlots[cmd.playerId];
+  let isLeft: boolean;
+  if (slot?.defaultLane != null) {
+    isLeft = slot.defaultLane === Lane.Left;
+  } else {
+    const myTeamIdx = slot?.teamIndex ?? (cmd.playerId < 2 ? 0 : 1);
+    let posInTeam = 0;
+    for (let i = 0; i < cmd.playerId; i++) {
+      const otherTeam = state.mapDef?.playerSlots[i]?.teamIndex ?? (i < 2 ? 0 : 1);
+      if (otherTeam === myTeamIdx) posInTeam++;
+    }
+    isLeft = posInTeam % 2 === 0;
   }
-  const isLeft = posInTeam % 2 === 0;
 
   if (isAlley) {
     // Shared tower alley: only towers allowed; occupancy is team-wide
@@ -711,7 +770,7 @@ function placeBuilding(state: GameState, cmd: Extract<GameCommand, { type: 'plac
     if (cmd.gridX < 0 || cmd.gridX >= state.mapDef.buildGridCols || cmd.gridY < 0 || cmd.gridY >= state.mapDef.buildGridRows) return;
     if (state.buildings.some(b => b.buildGrid === 'military' && b.playerId === cmd.playerId && b.gridX === cmd.gridX && b.gridY === cmd.gridY)) return;
     player.gold -= cost.gold; player.wood -= cost.wood; player.stone -= cost.stone;
-    const world = gridSlotToWorld(cmd.playerId, cmd.gridX, cmd.gridY, state.mapDef);
+    const world = gridSlotToWorld(cmd.playerId, cmd.gridX, cmd.gridY, state.mapDef, state.players);
     state.buildings.push({
       id: genId(state), type: cmd.buildingType, playerId: cmd.playerId, buildGrid: 'military',
       gridX: cmd.gridX, gridY: cmd.gridY, worldX: world.x, worldY: world.y,
@@ -734,7 +793,28 @@ function sellBuilding(state: GameState, cmd: Extract<GameCommand, { type: 'sell_
   }
   const player = state.players[cmd.playerId];
   const cost = getBuildingCost(player.race, building.type);
-  if (cost) player.gold += Math.floor(cost.gold * 0.5);
+
+  // Calculate total invested: base cost + upgrade costs
+  let totalGold = cost.gold, totalWood = cost.wood, totalStone = cost.stone;
+  const upgradeCosts = RACE_UPGRADE_COSTS[player.race];
+  if (building.upgradePath.length >= 2) {
+    totalGold += upgradeCosts.tier1.gold;
+    totalWood += upgradeCosts.tier1.wood;
+    totalStone += upgradeCosts.tier1.stone;
+  }
+  if (building.upgradePath.length >= 3) {
+    totalGold += upgradeCosts.tier2.gold;
+    totalWood += upgradeCosts.tier2.wood;
+    totalStone += upgradeCosts.tier2.stone;
+  }
+
+  // Refund 50% of total invested resources
+  const refundGold = Math.floor(totalGold * 0.5);
+  const refundWood = Math.floor(totalWood * 0.5);
+  const refundStone = Math.floor(totalStone * 0.5);
+  player.gold += refundGold;
+  player.wood += refundWood;
+  player.stone += refundStone;
 
   // If it's a hut, remove the associated harvester
   if (building.type === BuildingType.HarvesterHut) {
@@ -742,8 +822,12 @@ function sellBuilding(state: GameState, cmd: Extract<GameCommand, { type: 'sell_
     if (hIdx !== -1) state.harvesters.splice(hIdx, 1);
   }
 
-  addFloatingText(state, building.worldX, building.worldY, `+${Math.floor(cost.gold * 0.5)}`, '#ffd700', 'gold');
-  addSound(state, 'building_destroyed', building.worldX, building.worldY);
+  // Show refund floating texts for each resource returned
+  const bx = building.worldX, by = building.worldY;
+  if (refundGold > 0) addFloatingText(state, bx, by, `+${refundGold}`, '#ffd700', 'gold');
+  if (refundWood > 0) addFloatingText(state, bx, by - 0.5, `+${refundWood}`, '#8B4513', 'wood');
+  if (refundStone > 0) addFloatingText(state, bx, by - 1.0, `+${refundStone}`, '#aaaaaa', 'stone');
+  addSound(state, 'building_destroyed', bx, by);
   state.buildings.splice(idx, 1);
 }
 
@@ -772,7 +856,7 @@ function buildHut(state: GameState, cmd: Extract<GameCommand, { type: 'build_hut
   player.wood -= woodCost;
   player.stone -= stoneCost;
 
-  const origin = getHutGridOrigin(cmd.playerId, state.mapDef);
+  const origin = getHutGridOrigin(cmd.playerId, state.mapDef, state.players);
   const hCols = state.mapDef.hutGridCols;
   const totalSlots = hCols * state.mapDef.hutGridRows;
   const occupiedHuts = new Set(myHuts.map(b => b.gridX));
@@ -890,6 +974,70 @@ function dropDiamond(state: GameState, x: number, y: number): void {
   state.diamond.y = y;
   state.diamond.carrierId = null;
   state.diamond.carrierType = null;
+}
+
+function resetDiamondForRespawn(state: GameState): void {
+  state.diamond.state = 'respawning';
+  state.diamond.x = state.mapDef.diamondCenter.x;
+  state.diamond.y = state.mapDef.diamondCenter.y;
+  state.diamond.carrierId = null;
+  state.diamond.carrierType = null;
+  state.diamond.mineProgress = 0;
+  state.diamond.respawnTimer = DIAMOND_RESPAWN_TICKS;
+  state.diamond.deliveries++;
+}
+
+// Race-specific champion sprite: category + upgradeNode to look up the right sprite
+const CHAMPION_SPRITE: Record<Race, { category: UnitState['category']; node: string }> = {
+  [Race.Crown]:    { category: 'melee',  node: 'G' },  // Champion (King Human)
+  [Race.Horde]:    { category: 'melee',  node: 'A' },  // Brute (base melee)
+  [Race.Goblins]:  { category: 'melee',  node: 'E' },  // Troll Warlord
+  [Race.Oozlings]: { category: 'caster', node: 'A' },  // Bloater (base caster)
+  [Race.Demon]:    { category: 'caster', node: 'A' },  // Overlord (base caster)
+  [Race.Deep]:     { category: 'melee',  node: 'A' },  // Shell Guard (base melee)
+  [Race.Wild]:     { category: 'melee',  node: 'D' },  // Minotaur
+  [Race.Geists]:   { category: 'melee',  node: 'D' },  // Death Knight (base melee at D)
+  [Race.Tenders]:  { category: 'melee',  node: 'D' },  // Elder Ent
+};
+
+function spawnDiamondChampion(state: GameState, team: Team, x: number, y: number, playerId: number): void {
+  const scale = 1 + CHAMPION_SCALE_PER_DELIVERY * state.diamond.deliveries;
+  const hp = Math.round(CHAMPION_BASE_HP * scale);
+  const dmg = Math.round(CHAMPION_BASE_DAMAGE * scale);
+  const lane = state.rng() < 0.5 ? Lane.Left : Lane.Right;
+  const race = state.players[playerId].race;
+  const champ = CHAMPION_SPRITE[race];
+  state.units.push({
+    id: genId(state),
+    type: 'Diamond Champion',
+    playerId,
+    team,
+    x, y,
+    hp, maxHp: hp,
+    damage: dmg,
+    attackSpeed: CHAMPION_ATTACK_SPEED,
+    attackTimer: 0,
+    moveSpeed: CHAMPION_MOVE_SPEED,
+    range: CHAMPION_RANGE,
+    targetId: null,
+    lane,
+    pathProgress: -1,
+    carryingDiamond: false,
+    statusEffects: [],
+    hitCount: 0,
+    shieldHp: 0,
+    category: champ.category,
+    upgradeTier: 0,
+    upgradeNode: champ.node,
+    upgradeSpecial: {},
+    kills: 0,
+    lastDamagedByName: '',
+    spawnTick: state.tick,
+    nukeImmune: true,
+    isChampion: true,
+  });
+  addSound(state, 'diamond_carried', x, y);
+  addFloatingText(state, x, y, 'CHAMPION!', '#00ffff');
 }
 
 function dropWoodPile(state: GameState, x: number, y: number, amount: number, angleSeed = 0): void {
@@ -1122,18 +1270,31 @@ function tickUnitMovement(state: GameState): void {
 }
 
 function tickUnitDiamondPickup(state: GameState): void {
-  // Check if any unit carrying diamond reached own HQ (diamond delivery)
+  // Check if any unit carrying diamond reached own HQ → spawn champion
   for (const unit of state.units) {
     if (!unit.carryingDiamond || unit.hp <= 0) continue;
     const hq = getHQPosition(unit.team, state.mapDef);
     const hqCx = hq.x + HQ_WIDTH / 2, hqCy = hq.y + HQ_HEIGHT / 2;
     const dx = unit.x - hqCx, dy = unit.y - hqCy;
     if (dx * dx + dy * dy <= 9) { // 3 tile deposit radius
-      state.winner = unit.team;
-      state.winCondition = 'diamond';
-      state.matchPhase = 'ended';
+      unit.carryingDiamond = false;
+      spawnDiamondChampion(state, unit.team, unit.x, unit.y, unit.playerId);
+      resetDiamondForRespawn(state);
+      if (state.playerStats[unit.playerId]) state.playerStats[unit.playerId].diamondPickups++;
       return;
     }
+  }
+
+  // Diamond respawn timer
+  if (state.diamond.state === 'respawning') {
+    state.diamond.respawnTimer--;
+    if (state.diamond.respawnTimer <= 0) {
+      // Diamond reappears as dropped (immediately pickable) since gold cells are already mined
+      state.diamond.state = 'dropped';
+      addSound(state, 'diamond_exposed', state.diamond.x, state.diamond.y);
+      addFloatingText(state, state.diamond.x, state.diamond.y, 'DIAMOND RESPAWNED!', '#00ffff');
+    }
+    return;
   }
 
   if (state.diamond.state !== 'dropped') return;
@@ -1225,6 +1386,12 @@ function dealDamage(state: GameState, target: UnitState, amount: number, showFlo
         target.lastDamagedByName = killer.type;
         if (target.hp <= 0) {
           killer.kills++;
+          // Gold on kill (pirate upgrade path)
+          const gok = killer.upgradeSpecial?.goldOnKill ?? 0;
+          if (gok > 0) {
+            const kp = state.players[killer.playerId];
+            if (kp) { kp.gold += gok; addFloatingText(state, killer.x, killer.y - 0.3, `+${gok}g`, '#ffd700'); }
+          }
           // Wild Kill Frenzy: on kill, heal 25% maxHP, nearby Wild allies gain Frenzy (+50% dmg) and Haste
           const killerRace = state.players[killer.playerId]?.race;
           if (killerRace === Race.Wild) {
@@ -1843,7 +2010,7 @@ function tickCombat(state: GameState): void {
             state.projectiles.push({
               id: genId(state), x: unit.x, y: unit.y,
               targetId: target.id, damage: effDmg,
-              speed: 10, aoeRadius, team: unit.team,
+              speed: 10, aoeRadius, team: unit.team, visual: 'circle',
               sourcePlayerId: unit.playerId, sourceUnitId: unit.id,
               extraBurnStacks: sp?.extraBurnStacks,
               extraSlowStacks: sp?.extraSlowStacks,
@@ -1857,7 +2024,7 @@ function tickCombat(state: GameState): void {
           state.projectiles.push({
             id: genId(state), x: unit.x, y: unit.y,
             targetId: target.id, damage: effDmg,
-            speed: 10, aoeRadius, team: unit.team,
+            speed: 10, aoeRadius, team: unit.team, visual: 'circle',
             sourcePlayerId: unit.playerId, sourceUnitId: unit.id,
             extraBurnStacks: sp?.extraBurnStacks,
             extraSlowStacks: sp?.extraSlowStacks,
@@ -1870,7 +2037,7 @@ function tickCombat(state: GameState): void {
           state.projectiles.push({
             id: genId(state), x: unit.x, y: unit.y,
             targetId: target.id, damage: effDmg,
-            speed: 15, aoeRadius: splashR, team: unit.team,
+            speed: 15, aoeRadius: splashR, team: unit.team, visual: RANGED_VISUAL[race] ?? 'arrow',
             sourcePlayerId: unit.playerId, sourceUnitId: unit.id,
             extraBurnStacks: sp?.extraBurnStacks,
             extraSlowStacks: sp?.extraSlowStacks,
@@ -1890,7 +2057,7 @@ function tickCombat(state: GameState): void {
               state.projectiles.push({
                 id: genId(state), x: unit.x, y: unit.y,
                 targetId: nearby[mi].u.id, damage: msDmg,
-                speed: 15, aoeRadius: 0, team: unit.team,
+                speed: 15, aoeRadius: 0, team: unit.team, visual: RANGED_VISUAL[race] ?? 'arrow',
                 sourcePlayerId: unit.playerId, sourceUnitId: unit.id,
                 extraBurnStacks: sp?.extraBurnStacks,
                 extraSlowStacks: sp?.extraSlowStacks,
@@ -1918,7 +2085,7 @@ function tickCombat(state: GameState): void {
               state.projectiles.push({
                 id: genId(state), x: lastX, y: lastY,
                 targetId: chainTarget.id, damage: Math.round(getEffectiveDamage(unit) * chainPct),
-                speed: 20, aoeRadius: 0, team: unit.team,
+                speed: 20, aoeRadius: 0, team: unit.team, visual: 'orb',
                 sourcePlayerId: unit.playerId, sourceUnitId: unit.id,
               });
               lastX = chainTarget.x; lastY = chainTarget.y;
@@ -2045,6 +2212,12 @@ function tickCombat(state: GameState): void {
     }
     addDeathParticles(state, u.x, u.y, u.team === Team.Bottom ? '#4488ff' : '#ff4444', 5);
     if (u.carryingDiamond) dropDiamond(state, u.x, u.y);
+    // Gold on death (pirate upgrade path)
+    const god = u.upgradeSpecial?.goldOnDeath ?? 0;
+    if (god > 0) {
+      const dp = state.players[u.playerId];
+      if (dp) { dp.gold += god; addFloatingText(state, u.x, u.y - 0.3, `+${god}g`, '#ffd700'); }
+    }
     if (state.playerStats[u.playerId]) state.playerStats[u.playerId].unitsLost++;
     if (deathSoundCount < 3) { addSound(state, 'unit_killed', u.x, u.y); deathSoundCount++; }
     // Record fallen heroes (units with kills)
@@ -2104,7 +2277,7 @@ function tickHQDefense(state: GameState): void {
         damage: HQ_DAMAGE,
         speed: 10,
         aoeRadius: 0,
-        team,
+        team, visual: 'bolt',
         sourcePlayerId: -1, // HQ has no specific player owner
       });
       state.hqAttackTimer[team] = HQ_COOLDOWN_TICKS;
@@ -2192,7 +2365,7 @@ function tickTowers(state: GameState): void {
         damage: stats.damage,
         speed: 12,
         aoeRadius: 0,
-        team: player.team,
+        team: player.team, visual: 'bolt',
         sourcePlayerId: building.playerId,
         extraBurnStacks: towerUpgrade.special.extraBurnStacks,
         extraSlowStacks: towerUpgrade.special.extraSlowStacks,
@@ -2419,7 +2592,7 @@ function towerVisualProjectile(state: GameState, building: BuildingState, target
   state.projectiles.push({
     id: genId(state), x: building.worldX + 0.5, y: building.worldY + 0.5,
     targetId: target.id, damage: 0, speed: 12, aoeRadius: 0,
-    team: state.players[building.playerId].team,
+    team: state.players[building.playerId].team, visual: 'bolt',
     sourcePlayerId: building.playerId,
   });
 }
@@ -2429,7 +2602,7 @@ function towerChainProjectile(state: GameState, building: BuildingState, sx: num
   state.projectiles.push({
     id: genId(state), x: sx, y: sy,
     targetId: target.id, damage: 0, speed: 18, aoeRadius: 0,
-    team: state.players[building.playerId].team,
+    team: state.players[building.playerId].team, visual: 'orb',
     sourcePlayerId: building.playerId,
   });
 }
@@ -2670,6 +2843,7 @@ function executeNukeDetonation(state: GameState, playerId: number, x: number, y:
   let nukeKills = 0;
   state.units = state.units.filter(u => {
     if (u.team !== enemyTeam) return true;
+    if (u.nukeImmune) return true; // Diamond champions survive nukes
     if ((u.x - x) ** 2 + (u.y - y) ** 2 <= radius * radius) {
       addDeathParticles(state, u.x, u.y, '#ff4400', 8);
       if (u.carryingDiamond) dropDiamond(state, u.x, u.y);
@@ -2994,24 +3168,29 @@ function walkHome(state: GameState, h: HarvesterState, movePerTick: number): voi
   if (dist < 2) {
     const player = state.players[h.playerId];
     if (h.carryingDiamond) {
-      state.winner = h.team;
-      state.winCondition = 'diamond';
-      state.matchPhase = 'ended';
+      h.carryingDiamond = false;
+      spawnDiamondChampion(state, h.team, h.x, h.y, h.playerId);
+      resetDiamondForRespawn(state);
+      h.state = 'walking_to_node';
+      h.targetCellIdx = -1;
       return;
     }
     const ps = state.playerStats[h.playerId];
+    // Apply map resource yield multiplier for wood/stone (not gold — gold has its own economy)
+    const yieldMul = (h.carryingResource !== ResourceType.Gold) ? (state.mapDef?.resourceYield ?? 1) : 1;
+    const amt = h.carryAmount * yieldMul;
     if (h.carryingResource === ResourceType.Gold) {
-      player.gold += h.carryAmount;
-      if (ps) ps.totalGoldEarned += h.carryAmount;
-      if (state.tick % 2 === 0) addFloatingText(state, h.x, h.y, `+${h.carryAmount}`, '#ffd700', 'gold');
+      player.gold += amt;
+      if (ps) ps.totalGoldEarned += amt;
+      if (state.tick % 2 === 0) addFloatingText(state, h.x, h.y, `+${amt}`, '#ffd700', 'gold');
     } else if (h.carryingResource === ResourceType.Wood) {
-      player.wood += h.carryAmount;
-      if (ps) ps.totalWoodEarned += h.carryAmount;
-      if (state.tick % 2 === 0) addFloatingText(state, h.x, h.y, `+${h.carryAmount}`, '#8d6e63', 'wood');
+      player.wood += amt;
+      if (ps) ps.totalWoodEarned += amt;
+      if (state.tick % 2 === 0) addFloatingText(state, h.x, h.y, `+${amt}`, '#8d6e63', 'wood');
     } else if (h.carryingResource === ResourceType.Stone) {
-      player.stone += h.carryAmount;
-      if (ps) ps.totalStoneEarned += h.carryAmount;
-      if (state.tick % 2 === 0) addFloatingText(state, h.x, h.y, `+${h.carryAmount}`, '#ff5252', 'meat');
+      player.stone += amt;
+      if (ps) ps.totalStoneEarned += amt;
+      if (state.tick % 2 === 0) addFloatingText(state, h.x, h.y, `+${amt}`, '#ff5252', 'meat');
     }
     h.carryingResource = null;
     h.carryAmount = 0;
@@ -3064,7 +3243,7 @@ function computeWarHeroes(state: GameState): void {
     }
   }
   // Pick overall best (most kills)
-  candidates.sort((a, b) => b.kills - a.kills);
+  candidates.sort((a, b) => b.kills - a.kills || a.playerId - b.playerId || a.spawnTick - b.spawnTick);
   // Take the top hero (the single most impactful unit in the match)
   if (candidates.length > 0) {
     state.warHeroes.push(candidates[0]);

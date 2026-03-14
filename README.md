@@ -1,6 +1,6 @@
 # Spawn Wars
 
-2v2 fantasy RTS with 9 races, sprite-based rendering, and deterministic tick simulation. Build spawners, upgrade units, contest the diamond, and destroy the enemy HQ.
+Fantasy RTS with 9 races, sprite-based rendering, and deterministic tick simulation. Supports 1v1, 2v2, 3v3, and 4v4 modes. Build spawners, upgrade units, contest the diamond, and destroy the enemy HQ.
 
 ## Quick Start
 
@@ -64,7 +64,7 @@ npm run balance -- --quick  # mirror-team round robin only
 ## Project Structure
 
 - `src/main.ts` — Entry point, wires SceneManager.
-- `src/scenes/` — Scene system (Title, RaceSelect, Match, PostMatch).
+- `src/scenes/` — Scene system (Title, RaceSelect, DifficultySelect, Match, PostMatch, UnitGallery, Profile).
 - `src/game/Game.ts` — Game coordinator (loop, input, sound dispatch).
 - `src/game/GameLoop.ts` — Fixed timestep (20 ticks/sec).
 - `src/simulation/types.ts` — Constants, map geometry, enums, command types.
@@ -73,9 +73,16 @@ npm run balance -- --quick  # mirror-team round robin only
 - `src/simulation/BotAI.ts` — Pure bot AI (no DOM deps), used by Game.ts and headless sim.
 - `src/rendering/Renderer.ts` — World, HUD, minimap drawing.
 - `src/rendering/SpriteLoader.ts` — Loads sprites from Tiny Swords asset pack.
+- `src/rendering/VisualEffects.ts` — Day/night, weather, particles, screen shake.
+- `src/rendering/UIAssets.ts` — 9-slice panels, ribbons, swords, icons.
 - `src/rendering/Camera.ts` — Pan/zoom with mouse, keyboard, touch.
+- `src/simulation/maps.ts` — Data-driven map definitions (Duel, Skirmish, Warzone).
+- `src/network/PartyManager.ts` — Firebase RTDB party/lobby management.
+- `src/network/CommandSync.ts` — N-player turn-based lockstep sync.
+- `src/profile/ProfileData.ts` — Player stats, achievements, avatars (localStorage).
 - `src/ui/InputHandler.ts` — Input handling, build tray UI, placement logic.
 - `src/audio/SoundManager.ts` — Procedural SFX and spatial volume.
+- `src/audio/MusicPlayer.ts` — Background music playback.
 - `src/util/BalanceTracker.ts` — localStorage match history for dev balance overlay.
 - `src/tests/simSmoke.ts` — Simulation smoke tests.
 - `src/tests/balanceSim.ts` — Headless balance simulation script.
@@ -92,19 +99,19 @@ npm run balance -- --quick  # mirror-team round robin only
 - **Movement/Formations** — Lane-based pathing with formation slots, crowd dampening, choke spreading.
 - **Combat/Aggro** — Units acquire targets beyond attack range, chase until in range. HQ has defensive fire.
 - **Economy** — Race-aware passive income (+1/sec primary, +0.1/sec secondary). Harvesters mine base resources and center gold cells.
-- **Diamond Objective** — Exposed after center mining. Any combat unit picks up on contact.
+- **Diamond Objective** — Exposed after center mining. Any combat unit picks up on contact. Delivering spawns a Diamond Champion.
 - **Nukes** — Telegraph + delayed detonation (radius 16). Bot targeting picks densest enemy cluster.
+- **Multiplayer** — Firebase RTDB party system with N-player lockstep sync, matchmaking, party codes.
 - **Upgrades** — 216 upgrade nodes (9 races × 4 building types × 6 nodes). Specials: dodge, regen, revive, chain, multishot, splash, knockback, etc.
 - **First Tower Free** — First tower placement costs nothing.
 - **Tower Alley** — Shared 20×12 team build zone in the neck area.
 
 ## Sprite Assets
 
-- `src/assets/images/Tiny Swords (Free Pack)/` — Buildings (Blue/Red/Purple/Yellow/Black), units (Crown/Ember/Deep), resources, FX.
-- `src/assets/images/RPG HEROES ENEMIES/` — Horde unit sprites (Orcs/Trolls/Demons).
-- `src/assets/images/Tiny Swords (Enemy Pack)/` — Wild unit sprites (Spider/Gnoll/Shaman).
-- `src/assets/images/SLIMES BLOBS TENTACLES/` — Shade unit sprites (Slimes/Tentacles).
-- `src/assets/images/OVERBURN AssetPack/` — VFX overlays.
+- `src/assets/images/Tiny Swords (Free Pack)/` — Buildings (Blue/Red/Purple/Yellow/Black), units (Crown/Deep), UI elements, resources, FX.
+- `src/assets/images/CHARACTER MEGAPACK/` — Unit sprites (Horde, Demon, Geists, Tenders melee, Oozlings).
+- `src/assets/images/RPG HEROES ENEMIES/` — Various unit sprites.
+- `src/assets/images/SLIMES BLOBS TENTACLES/` — Oozlings sprites.
 
 ## AI Contributor Notes
 

@@ -566,7 +566,9 @@ export class ProfileScene implements Scene {
       const [img, def] = sprData;
       const frame = getSpriteFrame(Math.floor(this.animTime / 50), def);
       const aspect = def.frameW / def.frameH;
-      const drawH = size;
+      // Apply sprite scale so avatars match in-game relative sizes
+      const sprScale = def.scale ?? 1.0;
+      const drawH = size * sprScale;
       const drawW = drawH * aspect;
       const drawX = x + (size - drawW) / 2;
       const gY = def.groundY ?? 0.71;

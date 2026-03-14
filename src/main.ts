@@ -51,7 +51,9 @@ uiReady.then(() => {
 
   const matchScene = new MatchScene(canvas, sharedUI, musicPlayer, (game) => {
     recordMatch(game.state);
-    const newAch = updateProfileFromMatch(profile, game.state, game.playerSlot);
+    // Reload profile to pick up out-of-match achievement progress (duels, gallery)
+    const freshProfile = loadProfile();
+    const newAch = updateProfileFromMatch(freshProfile, game.state, game.playerSlot, game.isMultiplayer);
     for (const achId of newAch) {
       const def = ACHIEVEMENTS.find(a => a.id === achId);
       if (def) manager.showToast(`Achievement: ${def.name}`, def.desc);
@@ -86,8 +88,28 @@ uiReady.then(() => {
     manager.switchTo('difficultySelect');
   });
 
-  const difficultySelectScene = new DifficultySelectScene(manager, canvas, sharedUI, (difficulty, mapDef) => {
-    matchScene.setPlayerRace(selectedRace, difficulty, mapDef);
+  const difficultySelectScene = new DifficultySelectScene(manager, canvas, sharedUI, (difficulty, mapDef, teamSize) => {
+    // Build solo config using party path for proper teamSize support
+    const ppt = mapDef.playersPerTeam;
+    const bots: { [slot: string]: string } = {};
+    // Fill enemy team active slots with bots
+    for (let t = 0; t < mapDef.teams.length; t++) {
+      for (let s = 0; s < teamSize; s++) {
+        const slot = t * ppt + s;
+        if (slot === 0) continue; // player slot
+        bots[String(slot)] = difficulty;
+      }
+    }
+    matchScene.setPartyConfig({
+      humanPlayers: [{ slot: 0, race: selectedRace }],
+      slotBots: bots,
+      localSlot: 0,
+      seed: Math.floor(Math.random() * 2147483647),
+      partyCode: '',
+      botDifficulty: difficulty,
+      mapDef,
+      slotNames: { '0': titleScene.name },
+    });
     manager.switchTo('match');
   });
 

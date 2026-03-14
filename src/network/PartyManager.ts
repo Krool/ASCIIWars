@@ -3,6 +3,7 @@
 import { ref, set, get, onValue, remove, onDisconnect, Unsubscribe, query, orderByChild, equalTo } from 'firebase/database';
 import { getDb, getUserId } from './FirebaseService';
 import { Race } from '../simulation/types';
+import { getMapById } from '../simulation/maps';
 
 export interface PartyPlayer {
   uid: string;
@@ -26,6 +27,7 @@ export interface PartyState {
   status: 'waiting' | 'starting' | 'in_game' | 'ended';
   seed: number;
   difficulty?: string; // global fallback BotDifficultyLevel, set by host
+  teamSize?: number;   // players per team (1 = 1v1, 2 = 2v2, etc). Default = map's playersPerTeam.
 }
 
 /** Helper to get the ordered list of occupied player slots. */
@@ -45,6 +47,20 @@ export function getPartyPlayerCount(ps: PartyState): number {
     if (ps.players[String(i)]) count++;
   }
   return count;
+}
+
+/** Get slot indices that are active given the party's teamSize.
+ *  E.g. 1v1 on duel map → [0, 2] (first slot of each team). */
+export function getActiveSlots(ps: PartyState): number[] {
+  const mapDef = getMapById(ps.mapId ?? 'duel');
+  const teamSize = ps.teamSize ?? mapDef.playersPerTeam;
+  const slots: number[] = [];
+  for (let t = 0; t < mapDef.teams.length; t++) {
+    for (let s = 0; s < teamSize; s++) {
+      slots.push(t * mapDef.playersPerTeam + s);
+    }
+  }
+  return slots;
 }
 
 export type PartyListener = (state: PartyState | null) => void;
@@ -129,8 +145,8 @@ export class PartyManager {
       code = generateCode();
     }
 
-    // Determine max slots from map (import-free: just pass the number)
-    const maxSlots = mapId === 'skirmish' ? 6 : 4;
+    // Determine max slots from map definition
+    const maxSlots = getMapById(mapId).maxPlayers;
 
     const party: PartyState = {
       code,
@@ -166,10 +182,13 @@ export class PartyManager {
     const data = snap.val() as PartyState;
     if (data.status !== 'waiting') throw new Error('Party already started');
 
-    // Find first empty slot (slot 0 is host, start from 1)
+    // Find first empty active slot (skip slot 0 = host)
+    // Active slots respect teamSize: 1v1 on duel → [0, 2], so guest joins slot 2
+    const activeSlots = getActiveSlots(data);
     let freeSlot = -1;
-    for (let i = 1; i < data.maxSlots; i++) {
-      if (!data.players[String(i)]) { freeSlot = i; break; }
+    for (const slot of activeSlots) {
+      if (slot === 0) continue; // host's slot
+      if (!data.players[String(slot)]) { freeSlot = slot; break; }
     }
     if (freeSlot < 0) throw new Error('Party is full');
 
@@ -227,21 +246,60 @@ export class PartyManager {
     await set(ref(db, `parties/${this.partyCode}/difficulty`), difficulty);
   }
 
-  async updateMap(mapId: string): Promise<void> {
+  async updateTeamSize(teamSize: number): Promise<void> {
     if (!this.partyCode || !this._state || !this._isHost) return;
     const db = getDb();
-    const maxSlots = mapId === 'skirmish' ? 6 : 4;
+    const mapDef = getMapById(this._state.mapId ?? 'duel');
+    // Clamp to valid range
+    const clamped = Math.max(1, Math.min(teamSize, mapDef.playersPerTeam));
+    await set(ref(db, `parties/${this.partyCode}/teamSize`), clamped);
+    // Kick players and bots from now-inactive slots
+    const activeSlots = new Set<number>();
+    for (let t = 0; t < mapDef.teams.length; t++) {
+      for (let s = 0; s < clamped; s++) {
+        activeSlots.add(t * mapDef.playersPerTeam + s);
+      }
+    }
+    for (let i = 0; i < this._state.maxSlots; i++) {
+      if (activeSlots.has(i)) continue;
+      if (this._state.players[String(i)]) {
+        await remove(ref(db, `parties/${this.partyCode}/players/${i}`));
+      }
+      if (this._state.bots?.[String(i)]) {
+        await remove(ref(db, `parties/${this.partyCode}/bots/${i}`));
+      }
+    }
+  }
+
+  async updateMap(mapId: string, teamSize?: number): Promise<void> {
+    if (!this.partyCode || !this._state || !this._isHost) return;
+    const db = getDb();
+    const mapDef = getMapById(mapId);
+    const maxSlots = mapDef.maxPlayers;
     await set(ref(db, `parties/${this.partyCode}/mapId`), mapId);
     await set(ref(db, `parties/${this.partyCode}/maxSlots`), maxSlots);
+    // Set teamSize atomically with map change to avoid flash/race
+    if (teamSize != null) {
+      const clamped = Math.max(1, Math.min(teamSize, mapDef.playersPerTeam));
+      await set(ref(db, `parties/${this.partyCode}/teamSize`), clamped);
+    } else {
+      await remove(ref(db, `parties/${this.partyCode}/teamSize`));
+    }
     // If shrinking, remove excess players and bots
-    if (maxSlots < this._state.maxSlots) {
-      for (let i = maxSlots; i < this._state.maxSlots; i++) {
-        if (this._state.players[String(i)]) {
-          await remove(ref(db, `parties/${this.partyCode}/players/${i}`));
-        }
-        if (this._state.bots?.[String(i)]) {
-          await remove(ref(db, `parties/${this.partyCode}/bots/${i}`));
-        }
+    const activeSlots = new Set<number>();
+    const ts = teamSize ?? mapDef.playersPerTeam;
+    for (let t = 0; t < mapDef.teams.length; t++) {
+      for (let s = 0; s < ts; s++) {
+        activeSlots.add(t * mapDef.playersPerTeam + s);
+      }
+    }
+    for (let i = 0; i < this._state.maxSlots; i++) {
+      if (activeSlots.has(i)) continue;
+      if (this._state.players[String(i)]) {
+        await remove(ref(db, `parties/${this.partyCode}/players/${i}`));
+      }
+      if (this._state.bots?.[String(i)]) {
+        await remove(ref(db, `parties/${this.partyCode}/bots/${i}`));
       }
     }
   }
@@ -251,6 +309,9 @@ export class PartyManager {
     if (!this.partyCode || !this._state || !this._isHost) return;
     // Don't overwrite a human player
     if (this._state.players[String(slot)]) return;
+    // Don't allow bots in inactive slots
+    const active = new Set(getActiveSlots(this._state));
+    if (!active.has(slot)) return;
     const db = getDb();
     if (difficulty) {
       await set(ref(db, `parties/${this.partyCode}/bots/${slot}`), difficulty);
@@ -281,6 +342,10 @@ export class PartyManager {
     updates[`${base}/bots/${slotA}`] = botB;
     updates[`${base}/bots/${slotB}`] = botA;
 
+    // Update local slot if we were involved in the swap
+    if (this._localSlot === slotA) this._localSlot = slotB;
+    else if (this._localSlot === slotB) this._localSlot = slotA;
+
     // Use update() for atomic multi-path write
     const { update } = await import('firebase/database');
     await update(ref(db), updates);
@@ -297,8 +362,18 @@ export class PartyManager {
   async startGame(): Promise<void> {
     if (!this.partyCode || !this._state) return;
     if (!this.isHost) return;
-    // Need at least 2 humans to start
-    if (getPartyPlayerCount(this._state) < 2) return;
+    // Need at least 1 occupant (human or bot) on each team
+    const mapDef = getMapById(this._state.mapId ?? 'duel');
+    const ppt = mapDef.playersPerTeam;
+    const ts = this._state.teamSize ?? ppt;
+    for (let t = 0; t < mapDef.teams.length; t++) {
+      let hasOccupant = false;
+      for (let s = 0; s < ts; s++) {
+        const slot = t * ppt + s;
+        if (this._state.players[String(slot)] || this._state.bots?.[String(slot)]) { hasOccupant = true; break; }
+      }
+      if (!hasOccupant) return;
+    }
     await set(ref(getDb(), `parties/${this.partyCode}/status`), 'starting');
   }
 
@@ -319,9 +394,10 @@ export class PartyManager {
     snap.forEach((child) => {
       const data = child.val() as PartyState;
       if (data.hostUid !== uid && child.key) {
-        // Check if there's an empty slot
-        const playerCount = getPartyPlayerCount(data);
-        if (playerCount < data.maxSlots) {
+        // Check if there's an empty active slot
+        const active = getActiveSlots(data);
+        const occupiedActive = active.filter(s => !!data.players[String(s)]).length;
+        if (occupiedActive < active.length) {
           candidates.push(child.key);
         }
       }
@@ -362,6 +438,16 @@ export class PartyManager {
         });
         state.players = obj;
       }
+      // Track slot changes: if our UID moved to a different slot (host swapped us),
+      // update _localSlot so we report the correct slot when the game starts
+      const uid = getUserId();
+      for (let i = 0; i < state.maxSlots; i++) {
+        if (state.players[String(i)]?.uid === uid) {
+          this._localSlot = i;
+          break;
+        }
+      }
+
       this._state = state;
       this.notify();
     });

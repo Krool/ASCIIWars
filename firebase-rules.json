@@ -29,7 +29,7 @@
         },
         "maxSlots": {
           ".write": "auth != null && data.parent().child('hostUid').val() === auth.uid",
-          ".validate": "newData.isNumber() && newData.val() >= 2 && newData.val() <= 6"
+          ".validate": "newData.isNumber() && newData.val() >= 2 && newData.val() <= 8"
         },
         "mapId": {
           ".write": "auth != null && data.parent().child('hostUid').val() === auth.uid",
@@ -43,6 +43,10 @@
             newData.val() === 'in_game' ||
             newData.val() === 'ended'
           )"
+        },
+        "teamSize": {
+          ".write": "auth != null && data.parent().child('hostUid').val() === auth.uid",
+          ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 4"
         },
         "difficulty": {
           ".write": "auth != null && data.parent().child('hostUid').val() === auth.uid",
