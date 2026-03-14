@@ -221,36 +221,6 @@ function hasPathToEdge(cellMap: Map<string, GoldCell>, sx: number, sy: number, s
   return false;
 }
 
-function findBestCellToMine(cells: GoldCell[], cellMap: Map<string, GoldCell>, fromX: number, fromY: number, claimedIndices?: Set<number>): number {
-  let bestIdx = -1;
-  let bestDist = Infinity;
-
-  for (let i = 0; i < cells.length; i++) {
-    const c = cells[i];
-    if (c.gold <= 0) continue;
-    if (!isAccessible(cellMap, c.tileX, c.tileY)) continue;
-    const dx = c.tileX - fromX;
-    const dy = c.tileY - fromY;
-    let dist = dx * dx + dy * dy;
-    // Penalize cells already claimed by a teammate so harvesters spread out
-    if (claimedIndices && claimedIndices.has(i)) dist += 25;
-    if (dist < bestDist) {
-      bestDist = dist;
-      bestIdx = i;
-    }
-  }
-  return bestIdx;
-}
-
-function isAccessible(cellMap: Map<string, GoldCell>, tx: number, ty: number): boolean {
-  for (const [nx, ny] of [[tx-1,ty],[tx+1,ty],[tx,ty-1],[tx,ty+1]]) {
-    const neighbor = cellMap.get(`${nx},${ny}`);
-    if (!neighbor) return true;
-    if (neighbor.gold <= 0) return true;
-  }
-  return false;
-}
-
 // === Visual effect helpers ===
 
 function addFloatingText(state: GameState, x: number, y: number, text: string, color: string, icon?: string): void {
@@ -633,7 +603,7 @@ export function simulateTick(state: GameState, commands: GameCommand[]): void {
   tickProjectiles(state);
   tickStatusEffects(state);
   tickNukeTelegraphs(state);
-  tickHarvesters(state, diamondCellMap);
+  tickHarvesters(state);
   tickEffects(state);
   checkWinConditions(state);
 
@@ -2900,7 +2870,7 @@ function findOpenMiningSpot(state: GameState, h: HarvesterState, target: { x: nu
   return bestSpot;
 }
 
-function tickHarvesters(state: GameState, cellMap: Map<string, GoldCell>): void {
+function tickHarvesters(state: GameState): void {
   // Soft collision between harvesters: push apart
   for (let i = 0; i < state.harvesters.length; i++) {
     const a = state.harvesters[i];
@@ -2962,7 +2932,7 @@ function tickHarvesters(state: GameState, cellMap: Map<string, GoldCell>): void 
     const movePerTick = (HARVESTER_MOVE_SPEED / TICK_RATE) * (frightened ? 0.5 : 1.0);
 
     if (h.assignment === HarvesterAssignment.Center) {
-      tickCenterHarvester(state, h, movePerTick, cellMap);
+      tickCenterHarvester(state, h, movePerTick);
       clampToArenaBounds(h, 0.3, state.mapDef);
       continue;
     }
@@ -3037,7 +3007,7 @@ function tickHarvesters(state: GameState, cellMap: Map<string, GoldCell>): void 
   }
 }
 
-function tickCenterHarvester(state: GameState, h: HarvesterState, movePerTick: number, cellMap: Map<string, GoldCell>): void {
+function tickCenterHarvester(state: GameState, h: HarvesterState, movePerTick: number): void {
   if (h.carryingDiamond) {
     if (h.state !== 'walking_home') h.state = 'walking_home';
     walkHome(state, h, movePerTick);
@@ -3107,10 +3077,7 @@ function tickCenterHarvester(state: GameState, h: HarvesterState, movePerTick: n
   // Diamond not yet exposed — mine base gold (closest gold mine) instead of
   // wandering into the diamond cell field. Once exposed, the block above handles it.
   {
-    const baseGold = getResourceNodePosition(
-      { ...h, assignment: HarvesterAssignment.BaseGold } as HarvesterState,
-      state.mapDef,
-    );
+    const baseGold = getBaseGoldPosition(h.team, state.mapDef);
     const target = findOpenMiningSpot(state, h, baseGold);
     if (h.state === 'mining') {
       h.miningTimer--;
@@ -3181,18 +3148,19 @@ function walkHome(state: GameState, h: HarvesterState, movePerTick: number): voi
   }
 }
 
+function getBaseGoldPosition(team: Team, mapDef?: MapDef): { x: number; y: number } {
+  const hq = getHQPosition(team, mapDef);
+  if (mapDef?.shapeAxis === 'x') {
+    return { x: team === Team.Bottom ? hq.x + HQ_WIDTH + 6 : hq.x - 6, y: hq.y + HQ_HEIGHT / 2 };
+  }
+  return { x: hq.x + HQ_WIDTH / 2, y: team === Team.Bottom ? hq.y - 6 : hq.y + HQ_HEIGHT + 6 };
+}
+
 function getResourceNodePosition(h: HarvesterState, mapDef?: MapDef): { x: number; y: number } {
   const dc = mapDef?.diamondCenter ?? { x: DIAMOND_CENTER_X, y: DIAMOND_CENTER_Y };
   switch (h.assignment) {
-    case HarvesterAssignment.BaseGold: {
-      const hq = getHQPosition(h.team, mapDef);
-      // Gold mine is near HQ — offset along the lane axis
-      if (mapDef?.shapeAxis === 'x') {
-        // Landscape: offset in X (toward center)
-        return { x: h.team === Team.Bottom ? hq.x + HQ_WIDTH + 6 : hq.x - 6, y: hq.y + HQ_HEIGHT / 2 };
-      }
-      return { x: hq.x + HQ_WIDTH / 2, y: h.team === Team.Bottom ? hq.y - 6 : hq.y + HQ_HEIGHT + 6 };
-    }
+    case HarvesterAssignment.BaseGold:
+      return getBaseGoldPosition(h.team, mapDef);
     case HarvesterAssignment.Wood: {
       const node = mapDef?.resourceNodes.find(n => n.type === ResourceType.Wood);
       return node ? { x: node.x, y: node.y } : { x: WOOD_NODE_X, y: DIAMOND_CENTER_Y };
