@@ -6,7 +6,7 @@ import { UIAssets } from '../rendering/UIAssets';
 import { SoundManager } from '../audio/SoundManager';
 import { MusicPlayer } from '../audio/MusicPlayer';
 import { getAudioSettings, subscribeToAudioSettings, updateAudioSettings } from '../audio/AudioSettings';
-import { drawSettingsButton, drawSettingsOverlay, getSettingsOverlayLayout, hitRect, sliderValueFromPoint } from '../ui/SettingsOverlay';
+import { drawSettingsButton, drawSettingsOverlay, getSettingsOverlayLayout, hitRect, sliderValueFromPoint, SettingsSliderDrag } from '../ui/SettingsOverlay';
 import { getSafeTop } from '../ui/SafeArea';
 
 type ResIcon = 'uiGold' | 'uiWood' | 'uiMeat';
@@ -58,15 +58,20 @@ export class RaceSelectScene implements Scene {
   private tick = 0;
   private sceneAge = 0;
   private settingsOpen = false;
+  private sliderDrag = new SettingsSliderDrag();
   private music = new SoundManager();
   private musicPlayer: MusicPlayer;
   private audioSettings = getAudioSettings();
   private audioSettingsUnsub: (() => void) | null = null;
 
   private clickHandler: ((e: MouseEvent) => void) | null = null;
+  private mouseDownHandler: ((e: MouseEvent) => void) | null = null;
   private moveHandler: ((e: MouseEvent) => void) | null = null;
+  private mouseUpHandler: (() => void) | null = null;
   private keyHandler: ((e: KeyboardEvent) => void) | null = null;
   private touchHandler: ((e: TouchEvent) => void) | null = null;
+  private touchMoveHandler: ((e: TouchEvent) => void) | null = null;
+  private touchEndHandler: (() => void) | null = null;
 
   constructor(manager: SceneManager, canvas: HTMLCanvasElement, sprites: SpriteLoader, ui: UIAssets, musicPlayer: MusicPlayer, onConfirm: (race: Race) => void) {
     this.manager = manager;
@@ -148,18 +153,35 @@ export class RaceSelectScene implements Scene {
       }
     };
 
+    this.mouseDownHandler = (e) => {
+      const [cx, cy] = this.toCanvasCoords(e.clientX, e.clientY);
+      const layout = getSettingsOverlayLayout(this.canvas.clientWidth, this.canvas.clientHeight);
+      this.sliderDrag.start(cx, cy, layout, this.settingsOpen);
+    };
+
     this.moveHandler = (e) => {
+      if (this.sliderDrag.active) {
+        const [cx] = this.toCanvasCoords(e.clientX, e.clientY);
+        const layout = getSettingsOverlayLayout(this.canvas.clientWidth, this.canvas.clientHeight);
+        this.sliderDrag.move(cx, layout);
+        return;
+      }
       const [cx, cy] = this.toCanvasCoords(e.clientX, e.clientY);
       const boxIdx = this.getBoxIndexAt(cx, cy);
       this.hoverIndex = boxIdx >= 0 ? boxIdx : (this.isRandomButtonAt(cx, cy) ? RANDOM_INDEX : -1);
     };
 
+    this.mouseUpHandler = () => { this.sliderDrag.end(); };
+
     this.touchHandler = (e) => {
       e.preventDefault();
-      lastTouchTime = Date.now();
       const touch = e.touches[0];
       if (!touch) return;
       const [cx, cy] = this.toCanvasCoords(touch.clientX, touch.clientY);
+      // Start slider drag on touch
+      const layout = getSettingsOverlayLayout(this.canvas.clientWidth, this.canvas.clientHeight);
+      if (this.sliderDrag.start(cx, cy, layout, this.settingsOpen)) return;
+      lastTouchTime = Date.now();
       if (this.handleSettingsClick(cx, cy)) return;
       if (this.isBackButtonAt(cx, cy)) { this.manager.switchTo('title'); return; }
       if (this.isRandomButtonAt(cx, cy)) {
@@ -176,22 +198,45 @@ export class RaceSelectScene implements Scene {
         this.confirm();
       }
     };
+    this.touchMoveHandler = (e) => {
+      if (!this.sliderDrag.active) return;
+      e.preventDefault();
+      const touch = e.touches[0];
+      if (!touch) return;
+      const [cx] = this.toCanvasCoords(touch.clientX, touch.clientY);
+      const layout = getSettingsOverlayLayout(this.canvas.clientWidth, this.canvas.clientHeight);
+      this.sliderDrag.move(cx, layout);
+    };
+    this.touchEndHandler = () => { this.sliderDrag.end(); };
 
     window.addEventListener('keydown', this.keyHandler);
+    this.canvas.addEventListener('mousedown', this.mouseDownHandler);
     this.canvas.addEventListener('click', this.clickHandler);
     this.canvas.addEventListener('mousemove', this.moveHandler);
+    this.canvas.addEventListener('mouseup', this.mouseUpHandler);
     this.canvas.addEventListener('touchstart', this.touchHandler, { passive: false });
+    this.canvas.addEventListener('touchmove', this.touchMoveHandler, { passive: false });
+    this.canvas.addEventListener('touchend', this.touchEndHandler);
   }
 
   exit(): void {
     if (this.keyHandler) window.removeEventListener('keydown', this.keyHandler);
+    if (this.mouseDownHandler) this.canvas.removeEventListener('mousedown', this.mouseDownHandler);
     if (this.clickHandler) this.canvas.removeEventListener('click', this.clickHandler);
     if (this.moveHandler) this.canvas.removeEventListener('mousemove', this.moveHandler);
+    if (this.mouseUpHandler) this.canvas.removeEventListener('mouseup', this.mouseUpHandler);
     if (this.touchHandler) this.canvas.removeEventListener('touchstart', this.touchHandler);
+    if (this.touchMoveHandler) this.canvas.removeEventListener('touchmove', this.touchMoveHandler);
+    if (this.touchEndHandler) this.canvas.removeEventListener('touchend', this.touchEndHandler);
     this.keyHandler = null;
+    this.mouseDownHandler = null;
     this.clickHandler = null;
     this.moveHandler = null;
+    this.mouseUpHandler = null;
     this.touchHandler = null;
+    this.touchMoveHandler = null;
+    this.touchEndHandler = null;
+    this.sliderDrag.end();
     this.audioSettingsUnsub?.();
     this.audioSettingsUnsub = null;
     this.music.dispose();

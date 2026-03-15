@@ -11,7 +11,7 @@ import { getMapById } from '../simulation/maps';
 import { SoundManager } from '../audio/SoundManager';
 import { MusicPlayer } from '../audio/MusicPlayer';
 import { getAudioSettings, subscribeToAudioSettings, updateAudioSettings } from '../audio/AudioSettings';
-import { drawSettingsButton, drawSettingsOverlay, getSettingsOverlayLayout, hitRect as hitOverlayRect, sliderValueFromPoint } from '../ui/SettingsOverlay';
+import { drawSettingsButton, drawSettingsOverlay, getSettingsOverlayLayout, hitRect as hitOverlayRect, sliderValueFromPoint, SettingsSliderDrag } from '../ui/SettingsOverlay';
 import { loadPlayerName } from './TitlePlayerName';
 import { getElo, saveAllElo, updateTeamElo } from './TitleElo';
 import { LocalSetup, saveLocalSetup, loadLocalSetup, createDefaultLocalSetup, getLocalActiveSlots, canStartLocalSetup, canStartParty } from './TitleLocalSetup';
@@ -60,6 +60,8 @@ export class TitleScene implements Scene {
   private clickHandler: ((e: MouseEvent) => void) | null = null;
   private contextMenuHandler: ((e: MouseEvent) => void) | null = null;
   private touchHandler: ((e: TouchEvent) => void) | null = null;
+  private touchMoveHandler: ((e: TouchEvent) => void) | null = null;
+  private touchEndHandler: (() => void) | null = null;
   private keyHandler: ((e: KeyboardEvent) => void) | null = null;
 
   // Player name & profile
@@ -106,6 +108,7 @@ export class TitleScene implements Scene {
   private audioSettings = getAudioSettings();
   private audioSettingsUnsub: (() => void) | null = null;
   private settingsOpen = false;
+  private sliderDrag = new SettingsSliderDrag();
   private userInteracted = false;
   private fightStartPlayed = false;
 
@@ -238,13 +241,29 @@ export class TitleScene implements Scene {
     this.touchHandler = (e: TouchEvent) => {
       e.preventDefault();
       interactHandler();
-      lastClickTime = Date.now();
       const touch = e.touches[0];
       if (!touch) return;
       const rect = this.canvas.getBoundingClientRect();
       const cx = touch.clientX - rect.left;
       const cy = touch.clientY - rect.top;
+      // Start slider drag on touch
+      const settingsLayout = getSettingsOverlayLayout(this.canvas.clientWidth, this.canvas.clientHeight);
+      if (this.sliderDrag.start(cx, cy, settingsLayout, this.settingsOpen)) return;
+      lastClickTime = Date.now();
       this.handleClick(cx, cy);
+    };
+    this.touchMoveHandler = (e: TouchEvent) => {
+      if (!this.sliderDrag.active) return;
+      e.preventDefault();
+      const touch = e.touches[0];
+      if (!touch) return;
+      const rect = this.canvas.getBoundingClientRect();
+      const cx = touch.clientX - rect.left;
+      const settingsLayout = getSettingsOverlayLayout(this.canvas.clientWidth, this.canvas.clientHeight);
+      this.sliderDrag.move(cx, settingsLayout);
+    };
+    this.touchEndHandler = () => {
+      this.sliderDrag.end();
     };
     this.keyHandler = (e: KeyboardEvent) => {
       interactHandler();
@@ -281,13 +300,19 @@ export class TitleScene implements Scene {
     this.canvas.addEventListener('click', this.clickHandler);
     this.canvas.addEventListener('contextmenu', this.contextMenuHandler);
     this.canvas.addEventListener('touchstart', this.touchHandler, { passive: false });
+    this.canvas.addEventListener('touchmove', this.touchMoveHandler, { passive: false });
+    this.canvas.addEventListener('touchend', this.touchEndHandler);
     window.addEventListener('keydown', this.keyHandler);
 
-    // Drag-and-drop handlers for party slot rearrangement
+    // Drag-and-drop handlers for party slot rearrangement + slider drag
     this.mouseDownHandler = (e: MouseEvent) => {
       const rect = this.canvas.getBoundingClientRect();
       const cx = e.clientX - rect.left;
       const cy = e.clientY - rect.top;
+
+      // Settings slider drag
+      const settingsLayout = getSettingsOverlayLayout(this.canvas.clientWidth, this.canvas.clientHeight);
+      if (this.sliderDrag.start(cx, cy, settingsLayout, this.settingsOpen)) return;
 
       // Local setup drag
       if (this.localSetup) {
@@ -332,6 +357,14 @@ export class TitleScene implements Scene {
       }
     };
     this.mouseMoveHandler = (e: MouseEvent) => {
+      // Settings slider drag
+      if (this.sliderDrag.active) {
+        const rect = this.canvas.getBoundingClientRect();
+        const cx = e.clientX - rect.left;
+        const settingsLayout = getSettingsOverlayLayout(this.canvas.clientWidth, this.canvas.clientHeight);
+        this.sliderDrag.move(cx, settingsLayout);
+        return;
+      }
       if (this.dragSlot < 0) return;
       const rect = this.canvas.getBoundingClientRect();
       this.dragX = e.clientX - rect.left;
@@ -344,6 +377,7 @@ export class TitleScene implements Scene {
       }
     };
     this.mouseUpHandler = (e: MouseEvent) => {
+      if (this.sliderDrag.active) { this.sliderDrag.end(); return; }
       if (this.dragSlot < 0 || !this.isDragging) {
         this.dragSlot = -1;
         this.isDragging = false;
@@ -399,6 +433,8 @@ export class TitleScene implements Scene {
     if (this.clickHandler) this.canvas.removeEventListener('click', this.clickHandler);
     if (this.contextMenuHandler) this.canvas.removeEventListener('contextmenu', this.contextMenuHandler);
     if (this.touchHandler) this.canvas.removeEventListener('touchstart', this.touchHandler);
+    if (this.touchMoveHandler) this.canvas.removeEventListener('touchmove', this.touchMoveHandler);
+    if (this.touchEndHandler) this.canvas.removeEventListener('touchend', this.touchEndHandler);
     if (this.keyHandler) window.removeEventListener('keydown', this.keyHandler);
     if (this.mouseDownHandler) this.canvas.removeEventListener('mousedown', this.mouseDownHandler);
     if (this.mouseMoveHandler) this.canvas.removeEventListener('mousemove', this.mouseMoveHandler);
@@ -406,6 +442,9 @@ export class TitleScene implements Scene {
     this.clickHandler = null;
     this.contextMenuHandler = null;
     this.touchHandler = null;
+    this.touchMoveHandler = null;
+    this.touchEndHandler = null;
+    this.sliderDrag.end();
     this.keyHandler = null;
     this.mouseDownHandler = null;
     this.mouseMoveHandler = null;

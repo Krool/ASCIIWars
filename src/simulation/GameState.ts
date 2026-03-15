@@ -1230,24 +1230,34 @@ function tickUnitMovement(state: GameState): void {
     const path = getLanePath(unit.team, unit.lane, state.mapDef);
     const pathLen = getCachedPathLength(unit.team, unit.lane, state.mapDef);
 
-    // Ranged + caster units prefer to stay behind nearest allied melee
+    // Ranged + caster units prefer to stay behind nearest allied melee — but only near enemies
     if (unit.category === 'ranged' || unit.category === 'caster') {
-      let nearestMeleeProgress = -1;
-      let nearestMeleeDist = Infinity;
+      // Only engage formation behavior when enemies are within threat range
+      const threatRange = unit.range + 6;
+      let enemyNearby = false;
       for (const other of state.units) {
-        if (other.id === unit.id || other.team !== unit.team || other.lane !== unit.lane) continue;
-        if (other.category !== 'melee' || other.pathProgress < 0) continue;
-        const d = Math.abs(other.pathProgress - unit.pathProgress);
-        if (d < nearestMeleeDist) { nearestMeleeDist = d; nearestMeleeProgress = other.pathProgress; }
+        if (other.team === unit.team) continue;
+        const dx = other.x - unit.x, dy = other.y - unit.y;
+        if (dx * dx + dy * dy <= threatRange * threatRange) { enemyNearby = true; break; }
       }
-      if (nearestMeleeProgress >= 0) {
-        // Casters hang further back than ranged (they have AoE, don't need to be close)
-        const behind = unit.category === 'caster' ? 4.5 : 3;
-        const behindOffset = behind / pathLen;
-        const idealProgress = nearestMeleeProgress - behindOffset;
-        if (unit.pathProgress > idealProgress + 0.005) {
-          // Too far forward — slow down significantly
-          movePerTick *= 0.2;
+      if (enemyNearby) {
+        let nearestMeleeProgress = -1;
+        let nearestMeleeDist = Infinity;
+        for (const other of state.units) {
+          if (other.id === unit.id || other.team !== unit.team || other.lane !== unit.lane) continue;
+          if (other.category !== 'melee' || other.pathProgress < 0) continue;
+          const d = Math.abs(other.pathProgress - unit.pathProgress);
+          if (d < nearestMeleeDist) { nearestMeleeDist = d; nearestMeleeProgress = other.pathProgress; }
+        }
+        if (nearestMeleeProgress >= 0) {
+          // Casters hang further back than ranged (they have AoE, don't need to be close)
+          const behind = unit.category === 'caster' ? 4.5 : 3;
+          const behindOffset = behind / pathLen;
+          const idealProgress = nearestMeleeProgress - behindOffset;
+          if (unit.pathProgress > idealProgress + 0.005) {
+            // Too far forward — slow down significantly
+            movePerTick *= 0.2;
+          }
         }
       }
     }
@@ -2503,7 +2513,7 @@ function tickProjectiles(state: GameState): void {
           if (u.id === target.id || u.team === p.team) continue;
           const ad = Math.sqrt((u.x - target.x) ** 2 + (u.y - target.y) ** 2);
           if (ad <= p.aoeRadius) {
-            const aoeDmg = Math.round(p.damage * (p.splashDamagePct ?? 0.5));
+            const aoeDmg = Math.round(p.damage * (p.splashDamagePct ?? 0.5) * 0.9);
             dealDamage(state, u, aoeDmg, true, p.sourcePlayerId, p.sourceUnitId);
             if (sourcePlayer) {
               const race = sourcePlayer.race;
@@ -2980,6 +2990,9 @@ function tickHarvesters(state: GameState): void {
     return true;
   });
 
+  // Pre-compute shared context for center harvesters (once per tick, not per harvester)
+  const centerCtx = buildCenterHarvesterContext(state);
+
   for (const h of state.harvesters) {
     if (h.state === 'dead') {
       h.respawnTimer--;
@@ -3006,7 +3019,7 @@ function tickHarvesters(state: GameState): void {
     const movePerTick = (HARVESTER_MOVE_SPEED / TICK_RATE) * (frightened ? 0.5 : 1.0);
 
     if (h.assignment === HarvesterAssignment.Center) {
-      tickCenterHarvester(state, h, movePerTick);
+      tickCenterHarvester(state, h, movePerTick, centerCtx);
       clampToArenaBounds(h, 0.3, state.mapDef);
       continue;
     }
@@ -3081,7 +3094,71 @@ function tickHarvesters(state: GameState): void {
   }
 }
 
-function tickCenterHarvester(state: GameState, h: HarvesterState, movePerTick: number): void {
+const CARDINAL_DIRS: ReadonlyArray<readonly [number, number]> = [[0, -1], [0, 1], [-1, 0], [1, 0]];
+
+/** Pre-compute shared data for center harvesters (once per tick). */
+function buildCenterHarvesterContext(state: GameState): { cellSet: Set<string>; taken: Set<number> } {
+  const cellSet = new Set<string>();
+  for (const c of state.diamondCells) if (c.gold > 0) cellSet.add(`${c.tileX},${c.tileY}`);
+  const taken = new Set<number>();
+  for (const oh of state.harvesters) {
+    if (oh.state === 'dead') continue;
+    if (oh.assignment === HarvesterAssignment.Center && oh.targetCellIdx >= 0) {
+      taken.add(oh.targetCellIdx);
+    }
+  }
+  return { cellSet, taken };
+}
+
+/** Find an unmined diamond cell the harvester can reach (has a passable adjacent tile). */
+function findMinableDiamondCell(
+  state: GameState,
+  h: HarvesterState,
+  cellSet: Set<string>,
+  taken: Set<number>,
+): { cellIdx: number; minePos: { x: number; y: number } } | null {
+  const cells = state.diamondCells;
+  let bestIdx = -1;
+  let bestPos = { x: 0, y: 0 };
+  let bestDist = Infinity;
+
+  for (let i = 0; i < cells.length; i++) {
+    const c = cells[i];
+    if (c.gold <= 0) continue;
+    if (taken.has(i)) continue;
+
+    // Find a passable adjacent position (cardinal directions)
+    let adjBest: { x: number; y: number } | null = null;
+    let adjBestDist = Infinity;
+    for (const [ox, oy] of CARDINAL_DIRS) {
+      const ax = c.tileX + ox;
+      const ay = c.tileY + oy;
+      // Adjacent cell must not be unmined
+      if (cellSet.has(`${ax},${ay}`)) continue;
+      // Must not be inside an HQ
+      if (isInsideAnyHQ(ax + 0.5, ay + 0.5, 0.3)) continue;
+      const dx = (ax + 0.5) - h.x, dy = (ay + 0.5) - h.y;
+      const d = dx * dx + dy * dy;
+      if (d < adjBestDist) {
+        adjBestDist = d;
+        adjBest = { x: ax + 0.5, y: ay + 0.5 };
+      }
+    }
+    if (!adjBest) continue; // no accessible side
+
+    const dx = adjBest.x - h.x, dy = adjBest.y - h.y;
+    const d = dx * dx + dy * dy;
+    if (d < bestDist) {
+      bestDist = d;
+      bestIdx = i;
+      bestPos = adjBest;
+    }
+  }
+
+  return bestIdx >= 0 ? { cellIdx: bestIdx, minePos: bestPos } : null;
+}
+
+function tickCenterHarvester(state: GameState, h: HarvesterState, movePerTick: number, centerCtx: { cellSet: Set<string>; taken: Set<number> }): void {
   if (h.carryingDiamond) {
     if (h.state !== 'walking_home') h.state = 'walking_home';
     walkHome(state, h, movePerTick);
@@ -3148,33 +3225,52 @@ function tickCenterHarvester(state: GameState, h: HarvesterState, movePerTick: n
     return;
   }
 
-  // Diamond not yet exposed — mine base gold (closest gold mine) instead of
-  // wandering into the diamond cell field. Once exposed, the block above handles it.
-  {
-    const baseGold = getBaseGoldPosition(h.team, state.mapDef);
-    const target = findOpenMiningSpot(state, h, baseGold);
-    if (h.state === 'mining') {
-      h.miningTimer--;
-      if (h.miningTimer <= 0) {
+  // Diamond not yet exposed — mine diamond gold cells to clear a path and expose it.
+  if (h.state === 'walking_home') {
+    walkHome(state, h, movePerTick);
+    return;
+  }
+  if (h.state === 'mining') {
+    h.miningTimer--;
+    if (h.miningTimer <= 0) {
+      const cell = h.targetCellIdx >= 0 ? state.diamondCells[h.targetCellIdx] : null;
+      if (cell && cell.gold > 0) {
+        const yield_ = Math.min(GOLD_YIELD_PER_TRIP, cell.gold);
+        cell.gold -= yield_;
         h.carryingResource = ResourceType.Gold;
-        h.carryAmount = GOLD_YIELD_PER_TRIP;
+        h.carryAmount = yield_;
         h.state = 'walking_home';
+        h.targetCellIdx = -1;
+      } else {
+        h.state = 'walking_to_node';
+        h.targetCellIdx = -1;
       }
-      return;
     }
-    if (h.state === 'walking_home') {
-      walkHome(state, h, movePerTick);
-      return;
-    }
-    const dx = target.x - h.x, dy = target.y - h.y;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-    if (dist < 1) {
-      h.state = 'mining';
-      h.miningTimer = MINE_TIME_BASE_TICKS;
-    } else {
+    return;
+  }
+  // Find nearest unmined cell reachable from outside the diamond
+  const cellTarget = findMinableDiamondCell(state, h, centerCtx.cellSet, centerCtx.taken);
+  if (!cellTarget) {
+    // All cells mined — idle near diamond center waiting for exposure check
+    const dc = state.mapDef.diamondCenter;
+    const dx = dc.x - h.x, dy = dc.y - h.y;
+    if (dx * dx + dy * dy > 4) {
       h.state = 'walking_to_node';
-      moveWithSlide(h, target.x, target.y, movePerTick, state.diamondCells, state.mapDef);
+      moveWithSlide(h, dc.x, dc.y, movePerTick, state.diamondCells, state.mapDef);
     }
+    return;
+  }
+  // Walk to position adjacent to the target cell
+  const adjPos = cellTarget.minePos;
+  const dx = adjPos.x - h.x, dy = adjPos.y - h.y;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  if (dist < 1) {
+    h.state = 'mining';
+    h.miningTimer = MINE_TIME_BASE_TICKS;
+    h.targetCellIdx = cellTarget.cellIdx;
+  } else {
+    h.state = 'walking_to_node';
+    moveWithSlide(h, adjPos.x, adjPos.y, movePerTick, state.diamondCells, state.mapDef);
   }
 }
 

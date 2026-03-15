@@ -1,4 +1,4 @@
-import type { AudioSettings } from '../audio/AudioSettings';
+import { type AudioSettings, updateAudioSettings } from '../audio/AudioSettings';
 import type { UIAssets } from '../rendering/UIAssets';
 import { getSafeTop } from './SafeArea';
 
@@ -122,4 +122,43 @@ export function sliderValueFromPoint(x: number, rect: Rect): number {
   const trackX = rect.x + 94;
   const trackW = 76;
   return Math.max(0, Math.min(1, (x - trackX) / trackW));
+}
+
+/** Tracks slider drag state for the settings overlay. */
+export class SettingsSliderDrag {
+  active: 'music' | 'sfx' | null = null;
+
+  /** Call on pointer/touch down. Returns true if a slider drag started. */
+  start(cx: number, cy: number, layout: SettingsOverlayLayout, settingsOpen: boolean): boolean {
+    if (!settingsOpen) return false;
+    if (hitRect(cx, cy, layout.musicRow)) {
+      this.active = 'music';
+      this.apply(cx, layout);
+      return true;
+    }
+    if (hitRect(cx, cy, layout.sfxRow)) {
+      this.active = 'sfx';
+      this.apply(cx, layout);
+      return true;
+    }
+    return false;
+  }
+
+  /** Call on pointer/touch move. Returns true if dragging a slider. */
+  move(cx: number, layout: SettingsOverlayLayout): boolean {
+    if (!this.active) return false;
+    this.apply(cx, layout);
+    return true;
+  }
+
+  /** Call on pointer/touch up. */
+  end(): void {
+    this.active = null;
+  }
+
+  private apply(cx: number, layout: SettingsOverlayLayout): void {
+    const row = this.active === 'music' ? layout.musicRow : layout.sfxRow;
+    const key = this.active === 'music' ? 'musicVolume' : 'sfxVolume';
+    updateAudioSettings({ [key]: sliderValueFromPoint(cx, row) });
+  }
 }
