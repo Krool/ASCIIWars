@@ -1,18 +1,29 @@
 import { Scene, SceneManager } from './Scene';
 import { UIAssets } from '../rendering/UIAssets';
 import { SpriteLoader, drawSpriteFrame, drawGridFrame, getSpriteFrame } from '../rendering/SpriteLoader';
-import { Race, BuildingType, StatusType, StatusEffect, TICK_RATE } from '../simulation/types';
-import { UNIT_STATS, RACE_COLORS, UPGRADE_TREES } from '../simulation/data';
-import { getUnitUpgradeMultipliers } from '../simulation/GameState';
+import { Race, BuildingType, StatusType } from '../simulation/types';
+import { RACE_COLORS } from '../simulation/data';
 import { PartyManager, PartyState, PartyPlayer, getPartyPlayerCount, getActiveSlots } from '../network/PartyManager';
 import { isFirebaseConfigured, initFirebase } from '../network/FirebaseService';
 import { PlayerProfile, ALL_AVATARS, loadProfile, checkNonMatchAchievement, ACHIEVEMENTS } from '../profile/ProfileData';
 import { BotDifficultyLevel } from '../simulation/BotAI';
-import { getMapById, DUEL_MAP } from '../simulation/maps';
+import { getMapById } from '../simulation/maps';
 import { SoundManager } from '../audio/SoundManager';
 import { MusicPlayer } from '../audio/MusicPlayer';
 import { getAudioSettings, subscribeToAudioSettings, updateAudioSettings } from '../audio/AudioSettings';
 import { drawSettingsButton, drawSettingsOverlay, getSettingsOverlayLayout, hitRect as hitOverlayRect, sliderValueFromPoint } from '../ui/SettingsOverlay';
+import { loadPlayerName } from './TitlePlayerName';
+import { getElo, saveAllElo, updateTeamElo } from './TitleElo';
+import { LocalSetup, saveLocalSetup, loadLocalSetup, createDefaultLocalSetup, getLocalActiveSlots, canStartLocalSetup, canStartParty } from './TitleLocalSetup';
+import {
+  DuelUnit, DuelProjectile, ALL_RACES, UNIT_TYPES, ARENA_WIDTH,
+  TitleSfx, getSpawnCountForUnit, pickUpgradePath, createDuelUnit,
+  getEffectiveSpeed, tickDuelStatusEffects, tickDuelCombat, tickDuelProjectiles, findNearestEnemy,
+} from './TitleDuelSim';
+
+// Re-export for backward compatibility
+export type { LocalSetup } from './TitleLocalSetup';
+export { getElo, ELO_DEFAULT, loadAllElo, saveAllElo } from './TitleElo';
 
 const PARTY_DIFFICULTY_OPTIONS: { level: BotDifficultyLevel; label: string; color: string }[] = [
   { level: BotDifficultyLevel.Easy, label: 'EASY', color: '#4caf50' },
@@ -31,609 +42,7 @@ function getModeName(teamSize: number): string {
   }
 }
 
-// ─── Local party setup (no Firebase required) ───
 
-export interface LocalSetup {
-  mapId: string;
-  maxSlots: number;
-  /** Per-slot bot difficulty. Missing key = empty slot. */
-  bots: { [slot: string]: string };
-  /** Per-slot bot race. Missing key or 'random' = random at game start. */
-  botRaces?: { [slot: string]: string };
-  playerSlot: number;
-  playerRace: Race | 'random';
-  /** Players per team (1 = 1v1, 2 = 2v2). Default = map's playersPerTeam. */
-  teamSize?: number;
-}
-
-const LOCAL_SETUP_KEY = 'spawnwars.localSetup';
-
-function saveLocalSetup(setup: LocalSetup): void {
-  try { localStorage.setItem(LOCAL_SETUP_KEY, JSON.stringify(setup)); } catch {}
-}
-
-function loadLocalSetup(): LocalSetup | null {
-  try {
-    const raw = localStorage.getItem(LOCAL_SETUP_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    // Validate it has required fields
-    if (parsed && typeof parsed.mapId === 'string' && typeof parsed.playerSlot === 'number') {
-      return parsed as LocalSetup;
-    }
-  } catch {}
-  return null;
-}
-
-function createDefaultLocalSetup(): LocalSetup {
-  const mapDef = DUEL_MAP;
-  // Default to 1v1: one bot on the enemy team's first slot
-  const bots: { [slot: string]: string } = {};
-  const enemyFirstSlot = mapDef.playersPerTeam; // slot 2 on duel map
-  bots[String(enemyFirstSlot)] = 'medium';
-  return {
-    mapId: mapDef.id,
-    maxSlots: mapDef.maxPlayers,
-    bots,
-    playerSlot: 0,
-    playerRace: 'random',
-    teamSize: 1,
-  };
-}
-
-/** Get locally-active slot indices for a local setup based on teamSize. */
-function getLocalActiveSlots(setup: LocalSetup): number[] {
-  const mapDef = getMapById(setup.mapId);
-  const teamSize = setup.teamSize ?? mapDef.playersPerTeam;
-  const slots: number[] = [];
-  for (let t = 0; t < mapDef.teams.length; t++) {
-    for (let s = 0; s < teamSize; s++) {
-      slots.push(t * mapDef.playersPerTeam + s);
-    }
-  }
-  return slots;
-}
-
-/** Check if each team has at least 1 occupied slot (player or bot) among active slots. */
-function canStartLocalSetup(setup: LocalSetup): boolean {
-  const mapDef = getMapById(setup.mapId);
-  const ppt = mapDef.playersPerTeam;
-  const teamSize = setup.teamSize ?? ppt;
-  const teams = mapDef.teams.length;
-  for (let t = 0; t < teams; t++) {
-    const start = t * ppt;
-    const end = start + teamSize;
-    let hasOccupant = false;
-    for (let i = start; i < end; i++) {
-      if (i === setup.playerSlot || setup.bots[String(i)]) {
-        hasOccupant = true;
-        break;
-      }
-    }
-    if (!hasOccupant) return false;
-  }
-  return true;
-}
-
-/** Check if each team has at least 1 occupant (human or bot) among active party slots. */
-function canStartParty(ps: PartyState): boolean {
-  const mapDef = getMapById(ps.mapId ?? 'duel');
-  const ppt = mapDef.playersPerTeam;
-  const teamSize = ps.teamSize ?? ppt;
-  for (let t = 0; t < mapDef.teams.length; t++) {
-    const start = t * ppt;
-    const end = start + teamSize;
-    let hasOccupant = false;
-    for (let i = start; i < end; i++) {
-      if (ps.players[String(i)] || ps.bots?.[String(i)]) {
-        hasOccupant = true;
-        break;
-      }
-    }
-    if (!hasOccupant) return false;
-  }
-  return true;
-}
-
-// ─── Mini 1v1 simulation using real game stats ───
-
-const ALL_RACES = [Race.Crown, Race.Horde, Race.Goblins, Race.Oozlings, Race.Demon, Race.Deep, Race.Wild, Race.Geists, Race.Tenders];
-const UNIT_TYPES: BuildingType[] = [BuildingType.MeleeSpawner, BuildingType.RangedSpawner, BuildingType.CasterSpawner];
-function categoryOf(bt: BuildingType): 'melee' | 'ranged' | 'caster' {
-  if (bt === BuildingType.RangedSpawner) return 'ranged';
-  if (bt === BuildingType.CasterSpawner) return 'caster';
-  return 'melee';
-}
-
-const ARENA_WIDTH = 20;
-
-interface DuelUnit {
-  race: Race;
-  category: 'melee' | 'ranged' | 'caster';
-  buildingType: BuildingType;
-  name: string;
-  upgradeNode?: string; // e.g. 'B', 'D', 'G' — for sprite lookup
-  x: number;
-  hp: number;
-  maxHp: number;
-  damage: number;
-  attackSpeed: number;
-  attackTimer: number;
-  moveSpeed: number;
-  range: number;
-  facingLeft: boolean;
-  statusEffects: StatusEffect[];
-  shieldHp: number;
-  hitCount: number;
-  alive: boolean;
-  playerId: number;
-  statusTickAcc: number;
-  isAttacking: boolean;
-  attackAnimTimer: number;
-}
-
-interface DuelProjectile {
-  x: number;
-  targetX: number; // snapshot of target position when fired
-  speed: number; // tiles per second
-  damage: number;
-  sourceRace: Race;
-  sourceCategory: 'melee' | 'ranged' | 'caster';
-  sourcePlayerId: number;
-  targetUnit: DuelUnit;
-  facingLeft: boolean;
-  aoe: boolean; // caster projectiles are AoE-styled visually
-  age: number; // seconds alive (for animation)
-}
-
-// Tier 2 paths: A→B or A→C.  Tier 3 paths: A→B→D, A→B→E, A→C→F, A→C→G
-const TIER2_PATHS = [['A', 'B'], ['A', 'C']];
-const TIER3_PATHS = [['A', 'B', 'D'], ['A', 'B', 'E'], ['A', 'C', 'F'], ['A', 'C', 'G']];
-
-/** Get effective spawn count for a duel unit from its upgrade path + base stats. */
-function getSpawnCountForUnit(race: Race, unitType: BuildingType, upgradePath: string[]): number {
-  const stats = UNIT_STATS[race]?.[unitType];
-  const baseCount = stats?.spawnCount ?? 1;
-  const upgrade = getUnitUpgradeMultipliers(upgradePath, race, unitType);
-  return upgrade.special.spawnCount ?? baseCount;
-}
-
-function pickUpgradePath(tier: 1 | 2 | 3): string[] {
-  if (tier === 2) return TIER2_PATHS[Math.floor(Math.random() * TIER2_PATHS.length)];
-  if (tier === 3) return TIER3_PATHS[Math.floor(Math.random() * TIER3_PATHS.length)];
-  return ['A'];
-}
-
-function createDuelUnit(race: Race, unitType: BuildingType, x: number, facingLeft: boolean, playerId: number, tier: 1 | 2 | 3 = 1, fixedPath?: string[]): DuelUnit {
-  const stats = UNIT_STATS[race][unitType]!;
-  const upgradePath = fixedPath ?? pickUpgradePath(tier);
-  const upgrade = getUnitUpgradeMultipliers(upgradePath, race, unitType);
-  const upgradeNode = upgradePath[upgradePath.length - 1];
-
-  // Use upgrade name if available
-  const tree = UPGRADE_TREES[race]?.[unitType];
-  const nodeDef = upgradeNode !== 'A' && tree ? (tree as any)[upgradeNode] : undefined;
-  const name = nodeDef?.name ?? stats.name;
-
-  return {
-    race, category: categoryOf(unitType), buildingType: unitType, name, upgradeNode: upgradeNode !== 'A' ? upgradeNode : undefined,
-    x,
-    hp: Math.max(1, Math.round(stats.hp * upgrade.hp)),
-    maxHp: Math.max(1, Math.round(stats.hp * upgrade.hp)),
-    damage: Math.max(1, Math.round(stats.damage * upgrade.damage)),
-    attackSpeed: Math.max(0.2, stats.attackSpeed * upgrade.attackSpeed),
-    attackTimer: stats.attackSpeed * upgrade.attackSpeed * 0.3,
-    moveSpeed: Math.max(0.5, stats.moveSpeed * upgrade.moveSpeed),
-    range: Math.max(1, stats.range * upgrade.range),
-    facingLeft, statusEffects: [], shieldHp: 0, hitCount: 0, alive: true,
-    playerId, statusTickAcc: 0, isAttacking: false, attackAnimTimer: 0,
-  };
-}
-
-function getEffectiveSpeed(unit: DuelUnit): number {
-  let speed = unit.moveSpeed;
-  for (const eff of unit.statusEffects) {
-    if (eff.type === StatusType.Slow) speed *= Math.max(0.5, 1 - 0.1 * eff.stacks);
-    if (eff.type === StatusType.Haste) speed *= 1.3;
-  }
-  return speed;
-}
-
-function applyStatus(target: DuelUnit, type: StatusType, stacks: number): void {
-  const existing = target.statusEffects.find(e => e.type === type);
-  const maxStacks = type === StatusType.Slow || type === StatusType.Burn ? 5 : 1;
-  const duration = type === StatusType.Burn ? 3 * TICK_RATE :
-                   type === StatusType.Slow ? 3 * TICK_RATE :
-                   type === StatusType.Haste ? 3 * TICK_RATE :
-                   5 * TICK_RATE;
-  if (existing) {
-    existing.stacks = Math.min(existing.stacks + stacks, maxStacks);
-    existing.duration = duration;
-  } else {
-    target.statusEffects.push({ type, stacks: Math.min(stacks, maxStacks), duration });
-  }
-  if (type === StatusType.Shield && target.shieldHp <= 0) target.shieldHp = 12;
-}
-
-function dealDuelDamage(target: DuelUnit, amount: number): void {
-  if (target.shieldHp > 0) {
-    const absorbed = Math.min(target.shieldHp, amount);
-    target.shieldHp -= absorbed;
-    amount -= absorbed;
-    if (target.shieldHp <= 0) {
-      target.statusEffects = target.statusEffects.filter(e => e.type !== StatusType.Shield);
-    }
-  }
-  if (amount > 0) {
-    target.hp -= amount;
-    if (target.hp <= 0) { target.hp = 0; target.alive = false; }
-  }
-}
-
-// On-hit effects matching the real game (GameState.ts applyOnHitEffects)
-function applyDuelOnHit(attacker: DuelUnit, target: DuelUnit): void {
-  const isMelee = attacker.range <= 2;
-  const isCaster = attacker.category === 'caster';
-  switch (attacker.race) {
-    case Race.Crown:
-      // No on-hit (damage reduction is passive)
-      break;
-    case Race.Horde:
-      // Brute: knockback every 3rd melee hit
-      if (isMelee) {
-        attacker.hitCount++;
-        if (attacker.hitCount % 3 === 0) {
-          target.x += target.facingLeft ? 0.8 : -0.8;
-          target.x = Math.max(0, Math.min(ARENA_WIDTH, target.x));
-        }
-      }
-      break;
-    case Race.Goblins:
-      // Knifer: burn on ranged hit
-      if (!isMelee && !isCaster) applyStatus(target, StatusType.Burn, 1);
-      break;
-    case Race.Oozlings:
-      // Globule: 15% chance haste on melee hit
-      if (isMelee && Math.random() < 0.15) applyStatus(attacker, StatusType.Haste, 1);
-      break;
-    case Race.Demon:
-      // Smasher: burn on every melee hit
-      if (isMelee) applyStatus(target, StatusType.Burn, 1);
-      break;
-    case Race.Deep:
-      // Shell Guard: slow on melee; Harpooner: +2 slow on ranged
-      if (isMelee) applyStatus(target, StatusType.Slow, 1);
-      if (!isMelee && !isCaster) applyStatus(target, StatusType.Slow, 2);
-      break;
-    case Race.Wild:
-      // Lurker: burn on melee hit
-      if (isMelee) applyStatus(target, StatusType.Burn, 1);
-      break;
-    case Race.Geists:
-      // Bone Knight: burn + 15% lifesteal on melee
-      if (isMelee) {
-        applyStatus(target, StatusType.Burn, 1);
-        attacker.hp = Math.min(attacker.maxHp, attacker.hp + Math.round(attacker.damage * 0.15));
-      }
-      // Wraith Bow: 20% lifesteal on ranged
-      if (!isMelee && !isCaster) {
-        attacker.hp = Math.min(attacker.maxHp, attacker.hp + Math.round(attacker.damage * 0.2));
-      }
-      break;
-    case Race.Tenders:
-      // Treant: slow on melee hit
-      if (isMelee) applyStatus(target, StatusType.Slow, 1);
-      break;
-  }
-}
-
-// Caster support abilities (self-applied in 1v1 context, matching real game logic)
-function applyCasterSupport(caster: DuelUnit): void {
-  switch (caster.race) {
-    case Race.Crown:
-      // Shield (self in 1v1, normally shields 3 allies)
-      applyStatus(caster, StatusType.Shield, 1);
-      break;
-    case Race.Horde:
-    case Race.Oozlings:
-    case Race.Wild:
-      // Haste pulse (self in 1v1, normally hastes 3 allies)
-      applyStatus(caster, StatusType.Haste, 1);
-      break;
-    case Race.Goblins:
-      // Hex: slow the enemy (normally slows all enemies in range)
-      // Handled in tickDuelCombat since we need the target reference
-      break;
-    case Race.Demon:
-      // Pure damage caster — no support ability
-      break;
-    case Race.Deep:
-      // Cleanse: remove burn from self
-      {
-        const burnIdx = caster.statusEffects.findIndex(e => e.type === StatusType.Burn);
-        if (burnIdx >= 0) {
-          const burn = caster.statusEffects[burnIdx];
-          burn.stacks = Math.max(0, burn.stacks - 2);
-          if (burn.stacks <= 0) caster.statusEffects.splice(burnIdx, 1);
-        }
-      }
-      break;
-    case Race.Geists:
-      // Lifesteal heal: heal self +2 HP
-      caster.hp = Math.min(caster.maxHp, caster.hp + 2);
-      break;
-    case Race.Tenders:
-      // Regen aura: heal self +3 HP
-      caster.hp = Math.min(caster.maxHp, caster.hp + 3);
-      break;
-  }
-}
-
-function tickDuelStatusEffects(unit: DuelUnit, dtSec: number): void {
-  unit.statusTickAcc += dtSec;
-  const fullSecondTicks = Math.floor(unit.statusTickAcc);
-  if (fullSecondTicks > 0) unit.statusTickAcc -= fullSecondTicks;
-
-  for (let i = unit.statusEffects.length - 1; i >= 0; i--) {
-    const eff = unit.statusEffects[i];
-    eff.duration -= dtSec * TICK_RATE;
-
-    if (eff.type === StatusType.Burn && fullSecondTicks > 0) {
-      // SEARED combo: burn + slow = 1.5x damage
-      const hasSlowCombo = unit.statusEffects.some(e => e.type === StatusType.Slow);
-      const baseBurnDmg = 2 * eff.stacks * fullSecondTicks;
-      const burnDmg = hasSlowCombo ? Math.round(baseBurnDmg * 1.5) : baseBurnDmg;
-      dealDuelDamage(unit, burnDmg);
-    }
-
-    if (eff.type === StatusType.Shield && eff.duration <= 0) {
-      unit.shieldHp = 0;
-    }
-
-    if (eff.duration <= 0) {
-      unit.statusEffects.splice(i, 1);
-    }
-  }
-}
-
-// Combat tick — now fires projectiles for ranged/caster instead of instant damage
-function tickDuelCombat(
-  attacker: DuelUnit, target: DuelUnit, dtSec: number,
-  projectiles: DuelProjectile[],
-): void {
-  if (!attacker.alive || !target.alive) return;
-
-  const dist = Math.abs(target.x - attacker.x);
-
-  // Move toward target if out of range
-  if (dist > attacker.range) {
-    const speed = getEffectiveSpeed(attacker);
-    const step = Math.min(speed * dtSec, dist - attacker.range);
-    attacker.x += attacker.facingLeft ? -step : step;
-  }
-
-  // Attack
-  attacker.attackTimer -= dtSec;
-  if (attacker.attackTimer <= 0 && dist <= attacker.range + 0.5) {
-    attacker.attackTimer += attacker.attackSpeed;
-    attacker.isAttacking = true;
-    attacker.attackAnimTimer = 0.3;
-
-    const isMelee = attacker.range <= 2;
-    const isCaster = attacker.category === 'caster';
-
-    // Caster support abilities fire on attack
-    if (isCaster) {
-      applyCasterSupport(attacker);
-      // Goblin caster hex: slow the enemy
-      if (attacker.race === Race.Goblins) {
-        applyStatus(target, StatusType.Slow, 1);
-      }
-    }
-
-    if (isMelee) {
-      // Melee: instant damage + on-hit effects
-      dealDuelDamage(target, attacker.damage);
-      applyDuelOnHit(attacker, target);
-    } else {
-      // Ranged/Caster: fire projectile
-      const projSpeed = isCaster ? 10 : 15; // tiles per second (matching real game)
-      projectiles.push({
-        x: attacker.x,
-        targetX: target.x,
-        speed: projSpeed,
-        damage: attacker.damage,
-        sourceRace: attacker.race,
-        sourceCategory: attacker.category,
-        sourcePlayerId: attacker.playerId,
-        targetUnit: target,
-        facingLeft: attacker.facingLeft,
-        aoe: isCaster,
-        age: 0,
-      });
-    }
-  }
-}
-
-// Tick projectiles — move toward target, deal damage on arrival
-function tickDuelProjectiles(projectiles: DuelProjectile[], dtSec: number): boolean {
-  let anyHit = false;
-  for (let i = projectiles.length - 1; i >= 0; i--) {
-    const p = projectiles[i];
-    p.age += dtSec;
-
-    // Move toward target's current position (homing)
-    const tx = p.targetUnit.alive ? p.targetUnit.x : p.targetX;
-    const dx = tx - p.x;
-    const moveAmt = p.speed * dtSec;
-
-    if (Math.abs(dx) <= moveAmt || p.age > 3) {
-      // Hit or expired
-      if (p.targetUnit.alive) {
-        dealDuelDamage(p.targetUnit, p.damage);
-        // Apply on-hit effects from projectile source
-        const isCaster = p.sourceCategory === 'caster';
-        // Ranged on-hit effects (burn, slow, lifesteal via projectile)
-        if (!isCaster) {
-          switch (p.sourceRace) {
-            case Race.Goblins:
-              applyStatus(p.targetUnit, StatusType.Burn, 1);
-              break;
-            case Race.Deep:
-              applyStatus(p.targetUnit, StatusType.Slow, 2);
-              break;
-          }
-        }
-        anyHit = true;
-      }
-      projectiles.splice(i, 1);
-    } else {
-      p.x += dx > 0 ? moveAmt : -moveAmt;
-    }
-  }
-  return anyHit;
-}
-
-function findNearestEnemy(unit: DuelUnit, enemies: DuelUnit[]): DuelUnit | null {
-  let nearest: DuelUnit | null = null;
-  let minDist = Infinity;
-  for (const e of enemies) {
-    if (!e.alive) continue;
-    const d = Math.abs(e.x - unit.x);
-    if (d < minDist) { minDist = d; nearest = e; }
-  }
-  return nearest;
-}
-
-// ─── Minimal procedural sound effects for title screen ───
-
-class TitleSfx {
-  private actx: AudioContext | null = null;
-
-  private ctx(): AudioContext {
-    if (!this.actx) this.actx = new AudioContext();
-    if (this.actx.state === 'suspended') this.actx.resume();
-    return this.actx;
-  }
-
-  private note(freq: number, dur: number, gain: number, type: OscillatorType = 'square', delay = 0): void {
-    const ac = this.ctx();
-    const osc = ac.createOscillator();
-    const g = ac.createGain();
-    osc.type = type;
-    osc.frequency.value = freq;
-    const t0 = ac.currentTime + delay;
-    const scaledGain = gain * getAudioSettings().sfxVolume;
-    g.gain.setValueAtTime(scaledGain, t0);
-    g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
-    osc.connect(g).connect(ac.destination);
-    osc.start(t0);
-    osc.stop(t0 + dur + 0.01);
-  }
-
-  private sweep(from: number, to: number, dur: number, gain: number, type: OscillatorType = 'square', delay = 0): void {
-    const ac = this.ctx();
-    const osc = ac.createOscillator();
-    const g = ac.createGain();
-    osc.type = type;
-    const t0 = ac.currentTime + delay;
-    osc.frequency.setValueAtTime(from, t0);
-    osc.frequency.exponentialRampToValueAtTime(to, t0 + dur);
-    const scaledGain = gain * getAudioSettings().sfxVolume;
-    g.gain.setValueAtTime(scaledGain, t0);
-    g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
-    osc.connect(g).connect(ac.destination);
-    osc.start(t0);
-    osc.stop(t0 + dur + 0.01);
-  }
-
-  playHit(): void {
-    this.note(200, 0.05, 0.08, 'square');
-    this.note(150, 0.03, 0.06, 'sawtooth', 0.02);
-  }
-
-  playKill(): void {
-    this.sweep(280, 80, 0.12, 0.12, 'square');
-  }
-
-  playWin(): void {
-    const notes = [523, 659, 784, 1047];
-    notes.forEach((f, i) => {
-      const dur = i === notes.length - 1 ? 0.35 : 0.12;
-      this.note(f, dur, 0.12, 'square', i * 0.12);
-    });
-  }
-
-  playDraw(): void {
-    this.note(392, 0.15, 0.1, 'square', 0);
-    this.note(330, 0.15, 0.1, 'square', 0.15);
-    this.note(262, 0.25, 0.1, 'square', 0.3);
-  }
-
-  playFightStart(): void {
-    this.note(440, 0.06, 0.08, 'square', 0);
-    this.note(554, 0.08, 0.1, 'square', 0.06);
-  }
-}
-
-// ─── ELO Rating System ───
-
-const ELO_STORAGE_KEY = 'spawnwars.duelElo';
-const ELO_DEFAULT = 1200;
-const ELO_K = 32;
-
-function eloKey(race: Race, category: 'melee' | 'ranged' | 'caster'): string {
-  return `${race}:${category}`;
-}
-
-export function loadAllElo(): Record<string, number> {
-  try {
-    const raw = localStorage.getItem(ELO_STORAGE_KEY);
-    return raw ? JSON.parse(raw) : {};
-  } catch { return {}; }
-}
-
-export function saveAllElo(data: Record<string, number>): void {
-  try { localStorage.setItem(ELO_STORAGE_KEY, JSON.stringify(data)); } catch {}
-}
-
-export function getElo(race: Race, category: 'melee' | 'ranged' | 'caster'): number {
-  const data = loadAllElo();
-  return data[eloKey(race, category)] ?? ELO_DEFAULT;
-}
-
-export { ELO_DEFAULT };
-
-function updateTeamElo(teamA: DuelUnit[], teamB: DuelUnit[], winningSide: 'a' | 'b' | 'draw'): void {
-  if (teamA.length === 0 || teamB.length === 0) return;
-  const data = loadAllElo();
-
-  const avgElo = (team: DuelUnit[]) => {
-    const sum = team.reduce((s, u) => s + (data[eloKey(u.race, u.category)] ?? ELO_DEFAULT), 0);
-    return sum / team.length;
-  };
-
-  const avgA = avgElo(teamA);
-  const avgB = avgElo(teamB);
-
-  for (const u of teamA) {
-    const key = eloKey(u.race, u.category);
-    const elo = data[key] ?? ELO_DEFAULT;
-    const expected = 1 / (1 + Math.pow(10, (avgB - elo) / 400));
-    const score = winningSide === 'a' ? 1 : winningSide === 'draw' ? 0.5 : 0;
-    data[key] = Math.round(elo + ELO_K * (score - expected));
-  }
-
-  for (const u of teamB) {
-    const key = eloKey(u.race, u.category);
-    const elo = data[key] ?? ELO_DEFAULT;
-    const expected = 1 / (1 + Math.pow(10, (avgA - elo) / 400));
-    const score = winningSide === 'b' ? 1 : winningSide === 'draw' ? 0.5 : 0;
-    data[key] = Math.round(elo + ELO_K * (score - expected));
-  }
-
-  saveAllElo(data);
-}
 
 // ─── Title Scene ───
 
@@ -644,48 +53,6 @@ const RACE_LABELS: Record<Race, string> = {
   [Race.Wild]: 'WILD', [Race.Geists]: 'GEISTS', [Race.Tenders]: 'TENDERS',
 };
 
-// ─── Random name generator ───
-const NAME_PRE = [
-  'Swift','Bold','Iron','Dark','Grim','Red','Brave','Fell','Storm','Ash',
-  'Dire','Wild','Pale','Dread','Cold','Keen','Lone','Mad','Old','Sly',
-  'Tall','Wry','Stark','Void','Grey','Dusk','Dawn','Frost','Flame','Stone',
-  'Thorn','Shade','Ghost','Blood','War','Sky','Sea','Rust','Bone','Grit',
-  'Hex','Doom','Foul','Bleak','Gilt','Numb','Rot','Fey','Brisk','Woe',
-  'Gloom','Soot','Moss','Brine','Slag','Char','Murk','Haze','Mire','Smog',
-  'Dust','Vex','Jinx','Gale','Pyre','Bile','Scorn','Wilt','Ruin','Blight',
-  'Sleet','Barb','Crag','Gorge','Marsh','Ember','Chill','Blaze','Wisp','Lurk',
-  'Gaunt','Brute','Crook','Rogue','Fiend','Wraith','Snarl','Dour','Blunt','Coil',
-  'Crude','Scrap','Crux','Sleek','Bliss','Vigor','Noble','Sage','Grand','Prime',
-];
-const NAME_SUF = [
-  'Wolf','Blade','Fang','Hawk','Thorn','Raven','Viper','Bear','Fox','Crow',
-  'Skull','Horn','Shard','Bane','Drake','Helm','Root','Wyrm','Claw','Axe',
-  'Pike','Mace','Bow','Warg','Orc','Fist','Maw','Spine','Tooth','Hide',
-  'Bone','Eye','Tail','Wing','Scale','Hoof','Pelt','Tusk','Fin','Snout',
-  'Beak','Talon','Barb','Sting','Coil','Gut','Mane','Brood','Husk','Shell',
-  'Reef','Knot','Burr','Gnarl','Stump','Slab','Flint','Ore','Silt','Peat',
-  'Grub','Mite','Newt','Shrew','Toad','Wasp','Moth','Slug','Wren','Lark',
-  'Asp','Lynx','Ram','Boar','Stag','Hart','Bull','Hound','Crane','Eel',
-  'Carp','Squid','Shark','Crow','Rook','Jay','Finch','Dove','Owl','Bat',
-  'Rat','Stoat','Otter','Mink','Yak','Ibex','Goat','Lamb','Colt','Foal',
-];
-function randomName(): string {
-  const pre = NAME_PRE[Math.floor(Math.random() * NAME_PRE.length)];
-  const suf = NAME_SUF[Math.floor(Math.random() * NAME_SUF.length)];
-  return `${pre}${suf}`;
-}
-function loadPlayerName(): string {
-  try {
-    const saved = localStorage.getItem('spawnwars_name');
-    if (saved) return saved;
-    const name = randomName();
-    savePlayerName(name);
-    return name;
-  } catch { return randomName(); }
-}
-function savePlayerName(name: string): void {
-  try { localStorage.setItem('spawnwars_name', name); } catch {}
-}
 
 export class TitleScene implements Scene {
   private manager: SceneManager;
@@ -701,7 +68,6 @@ export class TitleScene implements Scene {
   // Player name & profile
   private playerName = loadPlayerName();
   get name(): string { return this.playerName; }
-  private diceBtnRect = { x: 0, y: 0, w: 0, h: 0 };
   private profileBtnRect = { x: 0, y: 0, w: 0, h: 0 };
   private resetEloBtnRect = { x: 0, y: 0, w: 0, h: 0 };
   private teamSizeBtnRect = { x: 0, y: 0, w: 0, h: 0 };
@@ -821,8 +187,9 @@ export class TitleScene implements Scene {
     this.partyStartFired = false;
     this.matchmaking = false;
 
-    // Reload profile (picks up avatar changes from ProfileScene)
+    // Reload profile and name (picks up changes from ProfileScene)
     this.profile = loadProfile();
+    this.playerName = loadPlayerName();
 
     // Listen for party state changes
     if (this.party) {
@@ -1441,14 +808,6 @@ export class TitleScene implements Scene {
     // Profile button
     if (this.hitRect(cx, cy, this.profileBtnRect)) {
       this.manager.switchTo('profile');
-      return;
-    }
-
-    // Dice button — randomize name
-    if (this.hitRect(cx, cy, this.diceBtnRect)) {
-      this.playerName = randomName();
-      savePlayerName(this.playerName);
-      if (this.party) this.party.localName = this.playerName;
       return;
     }
 
@@ -2342,7 +1701,6 @@ export class TitleScene implements Scene {
     const nameH = fontSize + 8;
     const baseAvatarSize = nameH * 2;
     const avatarSize = Math.round(baseAvatarSize * 1.3);  // 30% bigger
-    const diceSize = nameH;
 
     // Positions — avatar top-left, name underneath
     const avatarX = 8;
@@ -2397,32 +1755,6 @@ export class TitleScene implements Scene {
     ctx.fillText(this.playerName, nameCx, nameY);
     ctx.textBaseline = 'alphabetic';
 
-    // ── Dice button (to the right of the avatar) ──
-    const diceX = avatarX + avatarSize + 6;
-    const diceY = avatarY;
-    this.diceBtnRect = { x: diceX - 4, y: diceY - 4, w: diceSize + 8, h: diceSize + 8 };
-
-    ctx.fillStyle = 'rgba(255,215,0,0.15)';
-    ctx.beginPath();
-    ctx.roundRect(diceX, diceY, diceSize, diceSize, 4);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(255,215,0,0.5)';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.roundRect(diceX, diceY, diceSize, diceSize, 4);
-    ctx.stroke();
-
-    // Dice dots (⚄ pattern — 5 dots)
-    const dcx = diceX + diceSize / 2;
-    const dcy = diceY + diceSize / 2;
-    const dotR = 2;
-    const off = diceSize * 0.22;
-    ctx.fillStyle = '#ffd700';
-    for (const [dx, dy] of [[-off, -off], [off, -off], [0, 0], [-off, off], [off, off]] as [number,number][]) {
-      ctx.beginPath();
-      ctx.arc(dcx + dx, dcy + dy, dotR, 0, Math.PI * 2);
-      ctx.fill();
-    }
   }
 
   // ─── Render: Join code input ───

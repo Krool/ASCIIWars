@@ -243,7 +243,7 @@ export class RaceSelectScene implements Scene {
     const maxBoxW = (availW - (COLS - 1) * gapX) / COLS;
     const maxBoxH = (availH - (ROWS - 1) * gapY) / ROWS;
     const boxW = Math.min(maxBoxW, maxBoxH * 0.85);
-    const boxH = Math.min(maxBoxH, boxW * 1.18);
+    const boxH = Math.min(maxBoxH, boxW * 1.18, 200);
     const totalW = COLS * boxW + (COLS - 1) * gapX;
     const totalH = ROWS * boxH + (ROWS - 1) * gapY;
     const startX = (w - totalW) / 2;

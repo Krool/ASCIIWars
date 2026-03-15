@@ -8,7 +8,7 @@
 
 // 9-slice panels
 import bannerPng from '../assets/images/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/UI Elements/UI Elements/Banners/Banner.png?url';
-import woodTablePng from '../assets/images/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/UI Elements/UI Elements/Wood Table/WoodTable.png?url';
+import woodTablePng from '../assets/images/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/UI Elements/UI Elements/Wood Table/WoodTable_Slots.png?url';
 import specialPaperPng from '../assets/images/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/UI Elements/UI Elements/Papers/SpecialPaper.png?url';
 
 // Ribbons & Swords (spritesheets)
@@ -165,11 +165,11 @@ export class UIAssets {
     return true;
   }
 
-  // WoodTable: 448x448 9-slice for large panels, 192x192 single tile for small
+  // WoodTable_Slots: 192x192 single tile — just stretch it
   drawWoodTable(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number): boolean {
     const img = this.loadImage(woodTablePng);
     if (!img) return false;
-    this.drawNineSlice(ctx, img, STRIP_448, STRIP_448, x, y, w, h);
+    ctx.drawImage(img, x, y, w, h);
     return true;
   }
 

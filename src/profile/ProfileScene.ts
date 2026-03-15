@@ -9,6 +9,7 @@ import {
   isAvatarUnlocked, getWinRate, formatTime,
 } from './ProfileData';
 import { getSafeTop } from '../ui/SafeArea';
+import { randomName, loadPlayerName, savePlayerName } from '../scenes/TitlePlayerName';
 
 const ALL_RACES: Race[] = [
   Race.Crown, Race.Horde, Race.Goblins, Race.Oozlings, Race.Demon,
@@ -43,6 +44,8 @@ export class ProfileScene implements Scene {
   private ui: UIAssets;
   private sprites: SpriteLoader;
   private profile!: PlayerProfile;
+  private playerName = '';
+  private diceBtnRect = { x: 0, y: 0, w: 0, h: 0 };
   private tab: Tab = 'stats';
   private scrollY = 0;
   private maxScrollY = 0;
@@ -66,6 +69,7 @@ export class ProfileScene implements Scene {
 
   enter(): void {
     this.profile = loadProfile();
+    this.playerName = loadPlayerName();
     this.scrollY = 0;
     this.tab = 'stats';
 
@@ -161,6 +165,14 @@ export class ProfileScene implements Scene {
     const st = getSafeTop();
     if (cy < backSize + 10 + st && cy > st && cx < backSize + 12) {
       this.manager.switchTo('title');
+      return;
+    }
+
+    // Dice button (reroll name)
+    const d = this.diceBtnRect;
+    if (cx >= d.x && cx <= d.x + d.w && cy >= d.y && cy <= d.y + d.h) {
+      this.playerName = randomName();
+      savePlayerName(this.playerName);
       return;
     }
 
@@ -314,6 +326,87 @@ export class ProfileScene implements Scene {
     const titleFont = compact ? 16 : 26;
     const bodyFont = compact ? 13 : 24;
     const lineH = compact ? 28 : 36;
+
+    // ── Player identity row: [avatar] [name] ... [dice] ──
+    const avatarSize = compact ? 36 : 52;
+    const nameFont = compact ? 16 : 24;
+    const diceSize = compact ? 28 : 36;
+    const rowPad = compact ? 8 : 12;
+    const idRowH = avatarSize + rowPad * 2;
+    this.drawPanel(ctx, pad, y, panelW, idRowH);
+
+    // Avatar square (left-aligned)
+    const avX = pad + rowPad;
+    const avY = y + (idRowH - avatarSize) / 2;
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.beginPath();
+    ctx.roundRect(avX, avY, avatarSize, avatarSize, 6);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,215,0,0.4)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.roundRect(avX, avY, avatarSize, avatarSize, 6);
+    ctx.stroke();
+
+    // Draw avatar sprite
+    const avatarDef = ALL_AVATARS.find(a => a.id === this.profile.avatarId);
+    if (avatarDef) {
+      const sprData = this.sprites.getUnitSprite(avatarDef.race, avatarDef.category, 0, false, avatarDef.upgradeNode);
+      if (sprData) {
+        const [img, def] = sprData;
+        const frame = getSpriteFrame(Math.floor(this.animTime / 50), def);
+        const aspect = def.frameW / def.frameH;
+        const sprInset = 4;
+        const sprSize = avatarSize - sprInset * 2;
+        const sprScale = def.scale ?? 1.0;
+        const drawH = sprSize * sprScale;
+        const drawW = drawH * aspect;
+        const gY = def.groundY ?? 0.71;
+        const feetY = avY + avatarSize - sprInset - 2;
+        const drawY = feetY - drawH * gY;
+        const drawX = avX + (avatarSize - drawW) / 2;
+        drawSpriteFrame(ctx, img, def, frame, drawX, drawY, drawW, drawH);
+      }
+    }
+
+    // Name (next to avatar)
+    const nameX = avX + avatarSize + (compact ? 8 : 12);
+    ctx.font = `bold ${nameFont}px monospace`;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillText(this.playerName, nameX + 1, y + idRowH / 2 + 1);
+    ctx.fillStyle = '#ffd700';
+    ctx.fillText(this.playerName, nameX, y + idRowH / 2);
+
+    // Dice button (right-aligned)
+    const diceX = pad + panelW - rowPad - diceSize;
+    const diceY = y + (idRowH - diceSize) / 2;
+    this.diceBtnRect = { x: diceX - 4, y: diceY - 4, w: diceSize + 8, h: diceSize + 8 };
+
+    ctx.fillStyle = 'rgba(255,215,0,0.15)';
+    ctx.beginPath();
+    ctx.roundRect(diceX, diceY, diceSize, diceSize, 4);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,215,0,0.5)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.roundRect(diceX, diceY, diceSize, diceSize, 4);
+    ctx.stroke();
+
+    // Dice dots (5-dot pattern)
+    const dcx = diceX + diceSize / 2;
+    const dcy = diceY + diceSize / 2;
+    const dotR = compact ? 1.5 : 2.5;
+    const off = diceSize * 0.22;
+    ctx.fillStyle = '#ffd700';
+    for (const [dx, dy] of [[-off, -off], [off, -off], [0, 0], [-off, off], [off, off]] as [number, number][]) {
+      ctx.beginPath();
+      ctx.arc(dcx + dx, dcy + dy, dotR, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    y += idRowH + (compact ? 4 : 8);
 
     // ── Overview panel ──
     const overH = compact ? 120 : 200;

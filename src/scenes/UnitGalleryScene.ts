@@ -5,7 +5,7 @@ import { Race, BuildingType, TILE_SIZE } from '../simulation/types';
 import { loadProfile, checkNonMatchAchievement, ACHIEVEMENTS } from '../profile/ProfileData';
 import { UNIT_STATS, RACE_COLORS, UPGRADE_TREES, UpgradeNodeDef } from '../simulation/data';
 import { getUnitUpgradeMultipliers } from '../simulation/GameState';
-import { getElo, ELO_DEFAULT } from './TitleScene';
+import { getElo, ELO_DEFAULT } from './TitleElo';
 import { getSafeTop } from '../ui/SafeArea';
 
 const T = TILE_SIZE;
